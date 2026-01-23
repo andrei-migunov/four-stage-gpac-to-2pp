@@ -66,7 +66,7 @@ def get_lam(system, iv=None,interval = [0,10] ):
 '''Helper subroutine for getting lambda once an adequately stable solution has been found. 
 Input: a bound (estimate) for the system var sum'''
 def get_lam_from_max(max_sum):
-    lam = 1/ (2* max_sum)
+    lam = 2* max_sum
     return lam
                 
 
@@ -178,6 +178,8 @@ def scale_sys(system, lam):
     scaled_system = {}
     for var, expr in system.items():
         scaled_expr = expr.subs(subs_dict)
+        if var != list(system.keys())[0]:  # If not the first variable
+            scaled_expr =  scaled_expr / lam
         scaled_system[var] = expand(scaled_expr)
 
     return scaled_system
@@ -338,9 +340,11 @@ def balancing_dilation(system):
                     new_terms.append(expand(coeff * mono * uno_sum * x0))
                 elif degree_sum == 0:
                     # Should not happen - this is a negative constant term without var in it.
+                    raise ValueError("Negative constant term encountered in balancing dilation, which should not happen.")
                     new_terms.append(expand(coeff * uno_sum**2 * x0))
                 else:
                     # Should not happen, but just in case
+                    raise ValueError("Term with degree sum greater than 2 encountered in balancing dilation, which should not happen.")
                     new_terms.append(term * x0)
             else:
                 if degree_sum == 2:
@@ -352,6 +356,7 @@ def balancing_dilation(system):
                     new_terms.append(expand(coeff * uno_sum**2 * x0))
                 else:
                     # Should not happen, but just in case
+                    raise ValueError("Term with degree sum greater than 2 encountered in balancing dilation, which should not happen.")
                     new_terms.append(term)
         bdsys[var] = sum(new_terms)
     # bdsys[uno] = 0 #uno**2 * x0 

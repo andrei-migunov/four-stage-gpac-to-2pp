@@ -32,7 +32,7 @@ def carothers_observation1_ode_system_v2(odes, input_variables=None):
         return tuple(powers)
 
     def get_symbol(powers):
-        """Returns x_i for degree 1, v_[...] for others."""
+        """Returns x_i for degree 1, v_[...] for others, 1 for degree 0."""
         total_degree = sum(powers)
         if total_degree == 1:
             return variables[powers.index(1)]
@@ -44,9 +44,8 @@ def carothers_observation1_ode_system_v2(odes, input_variables=None):
 
     def monomial_to_var(term, queue, visited):
         """
-        Takes a monomial (e.g. x*y) and returns its variable representation.
-        If it's linear (x), returns x.
-        If it's higher order (v_[...]), returns that symbol and adds to queue if new.
+        Converts a monomial term into its variable representation.
+        Does NOT multiply variables together; just finds the symbol for ONE monomial.
         """
         powers = get_powers(term)
         sym = get_symbol(powers)
@@ -55,7 +54,6 @@ def carothers_observation1_ode_system_v2(odes, input_variables=None):
         if sum(powers) > 1 and powers not in visited:
             visited.add(powers)
             queue.append(powers)
-            
         return sym
 
     # 3. Initialization
@@ -69,59 +67,106 @@ def carothers_observation1_ode_system_v2(odes, input_variables=None):
         p[i] = 1
         visited_powers.add(tuple(p))
 
-    # 4. Process Original ODEs
-    # We essentially "lift" the original system first.
-    # If dx/dt = x*y, we change it to dx/dt = v_[1,1]
+    # 4. Process Original Variables
+    # We factor out the variable itself from negative terms if possible.
     for var in variables:
         rhs = sym_odes[var]
         new_rhs = 0
-        for term in (rhs.args if rhs.is_Add else [rhs]):
-            coeff, variable_part = term.as_coeff_Mul()
-            # Convert the variable part to a symbol (x or v_...)
-            var_sym = monomial_to_var(variable_part, queue, visited_powers)
-            new_rhs += coeff * var_sym
+        var_powers = get_powers(var)
+        
+        terms = rhs.args if rhs.is_Add else [rhs]
+        for term in terms:
+            coeff, var_part = term.as_coeff_Mul()
+            
+            if coeff < 0:
+                # Try to factor out 'var' to enforce CRN safety
+                # Check divisibility by checking if exponents are >= 1 at the var's index
+                term_powers = get_powers(var_part)
+                idx = variables.index(var)
+                
+                if term_powers[idx] >= 1:
+                    # Divisible! Remainder = term / var
+                    rem_powers = list(term_powers)
+                    rem_powers[idx] -= 1
+                    rem_term = sp.Mul(*[v**p for v, p in zip(variables, rem_powers)])
+                    
+                    # Result: -k * var * v(remainder)
+                    new_rhs += coeff * var * monomial_to_var(rem_term, queue, visited_powers)
+                else:
+                    # Not divisible (e.g. x' = -y). Cannot enforce constraint.
+                    new_rhs += coeff * monomial_to_var(var_part, queue, visited_powers)
+            else:
+                new_rhs += coeff * monomial_to_var(var_part, queue, visited_powers)
+                
         final_system[var] = new_rhs
 
-    # 5. Process the Queue (The recursive variable generation)
+    # 5. Process New Variables (The fix for Blowup + CRN Safety)
     while queue:
-        current_powers = queue.popleft() # e.g., (1, 1, 0)
+        current_powers = queue.popleft()
         current_sym = get_symbol(current_powers)
-        
-        # We build the RHS for d(v_current)/dt
-        # Using the chain rule: sum( p_i * (M/x_i) * dx_i/dt )
         rhs_accum = 0
         
+        # Chain Rule: d(v)/dt = sum( p_i * (v / x_i) * dx_i/dt )
         for i, p_val in enumerate(current_powers):
             if p_val > 0:
-                # A. Identify the "Reduced" variable (M / x_i)
-                # This guarantees we step down in degree (The logic you requested)
-                reduced_powers = list(current_powers)
-                reduced_powers[i] -= 1
-                reduced_term = sp.Mul(*[v**p for v, p in zip(variables, reduced_powers)])
+                xi = variables[i]
                 
-                # Get the symbol for this reduced term (add to queue if needed)
-                # This is the "alpha with one lower degree"
-                v_reduced = monomial_to_var(reduced_term, queue, visited_powers)
+                # 1. Identify v_reduced (The partial derivative part)
+                # v_reduced = v_current / x_i
+                red_powers = list(current_powers)
+                red_powers[i] -= 1
+                red_term = sp.Mul(*[v**p for v, p in zip(variables, red_powers)])
                 
-                # B. Multiply by the ODE of the variable we differentiated
-                # We use the ORIGINAL definition of the ODE to capture all interactions
-                xi_rhs = sym_odes[variables[i]]
+                # We get the SYMBOL for v_reduced. We do NOT multiply it algebraically yet.
+                v_reduced_sym = monomial_to_var(red_term, queue, visited_powers)
                 
-                for term in (xi_rhs.args if xi_rhs.is_Add else [xi_rhs]):
-                    coeff, var_part = term.as_coeff_Mul()
+                # 2. Iterate through terms of dx_i/dt (The ODE part)
+                xi_rhs = sym_odes[xi]
+                xi_terms = xi_rhs.args if xi_rhs.is_Add else [xi_rhs]
+                
+                for term in xi_terms:
+                    coeff, term_monomial = term.as_coeff_Mul()
                     
-                    # C. Convert the term from the ODE into a variable
-                    # If ODE has term 'a*b', this becomes v_[1,1]
-                    # We DO NOT combine v_reduced and var_part algebraically here.
-                    v_from_ode = monomial_to_var(var_part, queue, visited_powers)
-                    
-                    # D. Construct the final term: coeff * power * v_reduced * v_from_ode
-                    # This ensures the result is strictly Quadratic (product of two vars)
-                    rhs_accum += coeff * p_val * v_reduced * v_from_ode
+                    if coeff >= 0:
+                        # --- POSITIVE TERM ---
+                        # Logic: d(v) += coeff * p * v_reduced * v(term_monomial)
+                        # We keep v_reduced and v(term) SEPARATE. 
+                        # This ensures degree <= 2 (Quadratization).
+                        v_term_sym = monomial_to_var(term_monomial, queue, visited_powers)
+                        rhs_accum += coeff * p_val * v_reduced_sym * v_term_sym
+                        
+                    else:
+                        # --- NEGATIVE TERM ---
+                        # Logic: We must form -k * v_current * v_something
+                        # We check if 'term_monomial' is divisible by x_i
+                        
+                        t_powers = get_powers(term_monomial)
+                        if t_powers[i] >= 1:
+                            # It is divisible! We can perform the swap.
+                            # Standard: v_reduced * (x_i * alpha)
+                            # Swapped:  (v_reduced * x_i) * alpha  ==  v_current * alpha
+                            
+                            # Calculate alpha (remainder)
+                            alpha_powers = list(t_powers)
+                            alpha_powers[i] -= 1
+                            alpha_term = sp.Mul(*[v**p for v, p in zip(variables, alpha_powers)])
+                            
+                            v_alpha_sym = monomial_to_var(alpha_term, queue, visited_powers)
+                            
+                            # Result: -k * p * v_current * v_alpha
+                            rhs_accum += coeff * p_val * current_sym * v_alpha_sym
+                        else:
+                            # Not divisible. We cannot factor out v_current.
+                            # Fallback to standard chain rule (mathematically correct, but maybe not CRN safe)
+                            v_term_sym = monomial_to_var(term_monomial, queue, visited_powers)
+                            rhs_accum += coeff * p_val * v_reduced_sym * v_term_sym
 
         final_system[current_sym] = sp.simplify(rhs_accum)
 
     return final_system
+
+
+
 
 """
 Convert the initial values from self.input_iv (for the original system)

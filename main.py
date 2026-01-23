@@ -119,6 +119,8 @@ class CompileHistory:
         self.deg_2_non_homo_sys = None
         self.deg_2_non_homo_iv = None
         self.deg_2_mainvar = None
+        self.scaled_system = None
+        self.scaled_IV = None
         self.bdsys = None
         self.bdsysIV = None
         self.bdsys_mainvar = None
@@ -245,9 +247,9 @@ flags:
     sim               - List of simulation stages to run. Options: ["GPAC, CRN, DEG2, TPP, PLPP"].
     user_limit_sum         - User's estimate of the input system's limiting sum-of-values. Used to estimate fuel species x0. The more precisely one can get a sustainable amount of x0 (such that it does not crash to 0 during simulation), the better ODE solver runtime will be.
     cache_filename    - If provided, caches the CompileHistory object to this file (should end with .pkl).
-    filename          - If provided, writes a human-readable summary of the compilation process to this file (should end with .txt).
+    filename          - If provided, writes a human-readable summary of the compilation process to this file (should end with .txt).  "SCALED",
 '''
-def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filename=None, checks = False, verbose = False, sim = ["TPP", "PLPP"], user_limit_sum = None, simtime = 20):
+def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filename=None, checks = False, verbose = False, sim = ["DEG2","SCALED","TPP"], user_limit_sum = None, simtime = 20):
     #INITIAL SYSTEM 
     ch = CompileHistory()
     ch.input_iv = iv
@@ -302,19 +304,17 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
     # #if the user doesn't have a guess, we simulate the crn to estimate equilibrium, 
     num_crn_vars = len(ch.crn)
     num_deg2_vars = len(ch.deg_2_non_homo_sys)
-    max_est = get_limit_sum_est(ch.crn,ch.crn_iv, interval = [0,5])
-    max_est = 2*(num_deg2_vars/num_crn_vars)*user_limit_sum if user_limit_sum else 2*(num_deg2_vars/num_crn_vars)*max_est
+    max_est = get_limit_sum_est(ch.deg_2_non_homo_sys,ch.deg_2_non_homo_iv, interval = [0,10])
+    # max_est = (num_deg2_vars/num_crn_vars)*user_limit_sum if user_limit_sum else 2*(num_deg2_vars/num_crn_vars)*max_est
+    max_est = user_limit_sum if user_limit_sum else max_est
     lam = get_lam_from_max(max_est)
     # ch.tpp_impl_iv[x0] = limit_sum_est
-    scaled_system = scale_sys(ch.deg_2_non_homo_sys, lam)
-    scaled_IV = scale_IV(ch.deg_2_non_homo_iv, lam, Symbol('x_1'))
-
-    # __dict__, lim = fsp(scaled_system,list(scaled_IV.values()),time_span=(0,simtime),num_points = 250)
+    ch.scaled_system = scale_sys(ch.deg_2_non_homo_sys, lam)
+    ch.scaled_IV = scale_IV(ch.deg_2_non_homo_iv, lam, Symbol('x_1'))
 
     # Perform balancing dilation and convert initial values
-    ch.bdsys = balancing_dilation(scaled_system)
-    ch.bdsysIV = convert_to_BD_IV(ch.bdsys,ch.deg_2_non_homo_iv,ch.deg_2_mainvar,lam)
-
+    ch.bdsys = balancing_dilation(ch.scaled_system)
+    ch.bdsysIV = convert_to_BD_IV(ch.bdsys,ch.scaled_IV,ch.deg_2_mainvar,4*lam)
 
 
 
@@ -350,6 +350,13 @@ def run_simulations(ch, sim,simtime,debug,verbose):
         if lim and (debug or verbose):
             print(f'(CRN) Limiting simulation value of main variable is {lim}.')
 
+    if "SCALED" in sim:
+        if debug or verbose:
+            print("Simulating scaled system...")
+        __dict__, lim = fsp(ch.scaled_system,list(ch.scaled_IV.values()),time_span=(0,simtime),num_points = 250)
+        if lim and (debug or verbose):
+            print(f'(SCALED) Limiting simulation value of main variable is {lim}.')
+
     if "DEG2" in sim:
         if debug or verbose:
             print("Simulating degree-2 non-homogeneous system...")
@@ -362,7 +369,7 @@ def run_simulations(ch, sim,simtime,debug,verbose):
     if "TPP" in sim:
         if debug or verbose:
             print("Simulating TPP-implementable system (qua deterministic system)...")
-        __dict__, lim = fsp(ch.bdsys,list(ch.bdsysIV.values()),time_span=(0,5*simtime),num_points = 250)
+        __dict__, lim = fsp(ch.bdsys,list(ch.bdsysIV.values()),time_span=(0,simtime),num_points = 250)
         if lim and (debug or verbose):
             print(f'(TPP-implementable) Limiting simulation value of main variable is {lim}.')
 
