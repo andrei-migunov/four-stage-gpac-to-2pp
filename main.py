@@ -307,7 +307,7 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
     max_est = get_limit_sum_est(ch.deg_2_non_homo_sys,ch.deg_2_non_homo_iv, interval = [0,10])
     # max_est = (num_deg2_vars/num_crn_vars)*user_limit_sum if user_limit_sum else 2*(num_deg2_vars/num_crn_vars)*max_est
     max_est = user_limit_sum if user_limit_sum else max_est
-    lam = get_lam_from_max(max_est)
+    lam = 1/max_est#get_lam_from_max(max_est)
     # ch.tpp_impl_iv[x0] = limit_sum_est
     ch.scaled_system = scale_sys(ch.deg_2_non_homo_sys, lam)
     ch.scaled_IV = scale_IV(ch.deg_2_non_homo_iv, lam, Symbol('x_1'))
@@ -350,12 +350,6 @@ def run_simulations(ch, sim,simtime,debug,verbose):
         if lim and (debug or verbose):
             print(f'(CRN) Limiting simulation value of main variable is {lim}.')
 
-    if "SCALED" in sim:
-        if debug or verbose:
-            print("Simulating scaled system...")
-        __dict__, lim = fsp(ch.scaled_system,list(ch.scaled_IV.values()),time_span=(0,simtime),num_points = 250)
-        if lim and (debug or verbose):
-            print(f'(SCALED) Limiting simulation value of main variable is {lim}.')
 
     if "DEG2" in sim:
         if debug or verbose:
@@ -365,6 +359,13 @@ def run_simulations(ch, sim,simtime,debug,verbose):
         # __dict__, lim = fsp(ch.deg_2_non_homo_sys,list(ch.deg_2_non_homo_iv.values()),time_span=(0,simtime),num_points = 250)
         if lim and (debug or verbose):
             print(f'(DEG2) Limiting simulation value of main variable is {lim}.')
+
+    if "SCALED" in sim:
+        if debug or verbose:
+            print("Simulating scaled system...")
+        __dict__, lim = fsp(ch.scaled_system,list(ch.scaled_IV.values()),time_span=(0,simtime),num_points = 250)
+        if lim and (debug or verbose):
+            print(f'(SCALED) Limiting simulation value of main variable is {lim}.')
 
     if "TPP" in sim:
         if debug or verbose:
