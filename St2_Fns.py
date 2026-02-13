@@ -66,7 +66,7 @@ def get_lam(system, iv=None,interval = [0,10] ):
 '''Helper subroutine for getting lambda once an adequately stable solution has been found. 
 Input: a bound (estimate) for the system var sum'''
 def get_lam_from_max(max_sum):
-    lam = 2* max_sum
+    lam =  1.5*max_sum
     return lam
                 
 
@@ -318,7 +318,7 @@ def compute_upper_bound(odes):
     return upper_bound
 
 
-
+# TODO this is somehow updating ch.scaled_sstem - which is input. It shouldn't. Easy fix
 '''This approach performs balancing dilation and the one-trick on the system that has been decomposed. Another approach would be to check and 'fix' terms *while* decomposing, and that might be marginally more efficient. This seems less error-prone.'''
 def balancing_dilation(system):
     
@@ -326,7 +326,7 @@ def balancing_dilation(system):
     # uno = Symbol('x_uno')
     uno_sum = sum(system.keys()) + x0
     # For each variable in the system
-    bdsys = system
+    bdsys = {}
     for var in system:
         expr = system[var]
         new_terms = []

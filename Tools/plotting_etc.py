@@ -6,7 +6,7 @@ from matplotlib.widgets import CheckButtons
 from sympy.utilities.lambdify import *
 from sympy import *
 from sympy import symbols, sympify
-import _pickle
+import pickle
 import datetime
 from diffrax import diffeqsolve, ODETerm, Dopri5, SaveAt, ImplicitEuler, PIDController, Kvaerno5, Tsit5
 import jax

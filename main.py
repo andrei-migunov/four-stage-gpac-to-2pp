@@ -244,12 +244,12 @@ flags:
 
     verbose           - If True, prints intermediate system outputs and additional information during compilation.
     conversionchecks  - If True, performs form checks on intermediate systems (e.g., verifies CRN is implementable).
-    sim               - List of simulation stages to run. Options: ["GPAC, CRN, DEG2, TPP, PLPP"].
+    sim               - List of simulation stages to run. Options: ["GPAC, CRN, DEG2, "SCALED", TPP, PLPP"].
     user_limit_sum         - User's estimate of the input system's limiting sum-of-values. Used to estimate fuel species x0. The more precisely one can get a sustainable amount of x0 (such that it does not crash to 0 during simulation), the better ODE solver runtime will be.
     cache_filename    - If provided, caches the CompileHistory object to this file (should end with .pkl).
     filename          - If provided, writes a human-readable summary of the compilation process to this file (should end with .txt).  "SCALED",
 '''
-def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filename=None, checks = False, verbose = False, sim = ["DEG2","SCALED","TPP"], user_limit_sum = None, simtime = 20):
+def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filename=None, checks = False, verbose = False, sim = ["DEG2", "SCALED", "TPP"], user_limit_sum = None, simtime = 20):
     #INITIAL SYSTEM 
     ch = CompileHistory()
     ch.input_iv = iv
@@ -307,7 +307,7 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
     max_est = get_limit_sum_est(ch.deg_2_non_homo_sys,ch.deg_2_non_homo_iv, interval = [0,10])
     # max_est = (num_deg2_vars/num_crn_vars)*user_limit_sum if user_limit_sum else 2*(num_deg2_vars/num_crn_vars)*max_est
     max_est = user_limit_sum if user_limit_sum else max_est
-    lam = 1/max_est#get_lam_from_max(max_est)
+    lam = get_lam_from_max(max_est)
     # ch.tpp_impl_iv[x0] = limit_sum_est
     ch.scaled_system = scale_sys(ch.deg_2_non_homo_sys, lam)
     ch.scaled_IV = scale_IV(ch.deg_2_non_homo_iv, lam, Symbol('x_1'))
@@ -370,6 +370,7 @@ def run_simulations(ch, sim,simtime,debug,verbose):
     if "TPP" in sim:
         if debug or verbose:
             print("Simulating TPP-implementable system (qua deterministic system)...")
+        # ch.bdsysIV[x0] = 2
         __dict__, lim = fsp(ch.bdsys,list(ch.bdsysIV.values()),time_span=(0,simtime),num_points = 250)
         if lim and (debug or verbose):
             print(f'(TPP-implementable) Limiting simulation value of main variable is {lim}.')
