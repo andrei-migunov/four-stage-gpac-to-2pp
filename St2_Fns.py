@@ -66,7 +66,7 @@ def get_lam(system, iv=None,interval = [0,10] ):
 '''Helper subroutine for getting lambda once an adequately stable solution has been found. 
 Input: a bound (estimate) for the system var sum'''
 def get_lam_from_max(max_sum):
-    lam =  1.5*max_sum
+    lam =  max_sum*15
     return lam
                 
 
@@ -373,14 +373,14 @@ Note: bdsys and deg2sys are the same system except for two things:
 def convert_to_BD_IV(bdsys,deg2sys_iv,mainvar,lam=1):
     x0 = Symbol('x_0')
     # uno = Symbol('x_uno')
-
+    # Note to Garrett: stick with this for now. IV should be 0 for everyone except for x0, whose IV is 1. 
     bdsys_iv = {}
 
     for var in bdsys:
         if var != x0 and var != mainvar: # and var != uno 
-            bdsys_iv[var] = deg2sys_iv[var]*lam
+            bdsys_iv[var] = 0 # deg2sys_iv[var]*lam
             
-    bdsys_iv[mainvar] = deg2sys_iv[mainvar] # This is the main variable of the system - it was not scaled. Its IV is not scaled either.
+    bdsys_iv[mainvar] = 0 # deg2sys_iv[mainvar] # This is the main variable of the system - it was not scaled. Its IV is not scaled either.
     bdsys_iv[x0] = 1 #10 * len(bdsys)  # x0 is the fuel species for balancing dilation - there should be plenty of it. This is an estimate.
     # bdsys_iv[uno] = 1 # Uno is the 'one' species for the one-trick - it has a constant value of 1.
     return bdsys_iv

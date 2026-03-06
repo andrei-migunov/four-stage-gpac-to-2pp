@@ -249,7 +249,7 @@ flags:
     cache_filename    - If provided, caches the CompileHistory object to this file (should end with .pkl).
     filename          - If provided, writes a human-readable summary of the compilation process to this file (should end with .txt).  "SCALED",
 '''
-def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filename=None, checks = False, verbose = False, sim = ["DEG2", "SCALED", "TPP"], user_limit_sum = None, simtime = 20):
+def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filename=None, checks = False, verbose = False, sim = ["TPP"], user_limit_sum = None, simtime = 20):
     #INITIAL SYSTEM 
     ch = CompileHistory()
     ch.input_iv = iv
@@ -314,7 +314,10 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
 
     # Perform balancing dilation and convert initial values
     ch.bdsys = balancing_dilation(ch.scaled_system)
-    ch.bdsysIV = convert_to_BD_IV(ch.bdsys,ch.scaled_IV,ch.deg_2_mainvar,4*lam)
+    ch.bdsysIV = convert_to_BD_IV(ch.bdsys,ch.scaled_IV,ch.deg_2_mainvar)
+
+
+
 
 
 
@@ -371,7 +374,7 @@ def run_simulations(ch, sim,simtime,debug,verbose):
         if debug or verbose:
             print("Simulating TPP-implementable system (qua deterministic system)...")
         # ch.bdsysIV[x0] = 2
-        __dict__, lim = fsp(ch.bdsys,list(ch.bdsysIV.values()),time_span=(0,simtime),num_points = 250)
+        __dict__, lim = fsp(ch.bdsys,list(ch.bdsysIV.values()),time_span=(0,simtime*5),num_points = 250)
         if lim and (debug or verbose):
             print(f'(TPP-implementable) Limiting simulation value of main variable is {lim}.')
 
