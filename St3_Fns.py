@@ -5,7 +5,7 @@ from sympy import Integral#, Zero
 from sympy.utilities.lambdify import *
 import numpy as np
 import scipy.integrate as intg
-from Old.PopulationProtocol import *
+#from Old.PopulationProtocol import *
 import ast # Used to evaluate lists in string format for variable names
 import re # Used to quickly drop all non-numeric information when evaluating variable names for indexing
 
@@ -53,13 +53,22 @@ def half_prod(sys1):
     # Creates the mappings for the z_vars to be utilized in substitution later
     z_var_map = {}
 
+    total_vars = len(sys1)
+    total_pairs = total_vars * (total_vars + 1) // 2
+    print(f"half_prod: computing {total_pairs} upper-triangular z entries from {total_vars} variables...")
+
     # Loops to make all of the pairs
     m = 0
+    pair_index = 0
     for var1 in sys1.keys():
         n = 0
         for var2 in sys1.keys():
             #Checks for lower half of matrix
             if m <= n:
+                pair_index += 1
+                if pair_index % 20 == 0 or pair_index == 1 or pair_index == total_pairs:
+                    print(f"  half_prod progress: {pair_index}/{total_pairs} (var1={var1}, var2={var2})")
+
                 #Adds new z variables to system
                 #z_system[symbols(f"z_[{i},{j}]")] = get_z_derivative_half_prod(sys1, var1, var2, i, j)
                 #print(f"z_[{i},{j}]: ",get_z_derivative(sys1, var1, var2, i, j))
@@ -222,8 +231,10 @@ def sym_idx_parser(raw_symbol):
 '''
 def self_product(sys):
     # Take the half product
-    prod_sys, var_map = half_prod(sys)
+    print("Running half product calculation for stage 3 self product...")
+    prod_sys, var_map = half_prod(sys) 
     # Convert the variables to z's
+    print("Running simple_sub for stage 3 self product...")
     final_sys = simple_sub(prod_sys, var_map)
     return final_sys
 
@@ -256,9 +267,6 @@ def general_product(sys1, sys2):
 #         - Data Type: List of tuples
 #         - Desc: A list of tuples in which every tuple has the object in its first position swapped with the second position
 '''
-def reverse_tuples(tuples):
-    return [tuple[::-1] for tuple in tuples]
-
 '''
 # A simple substitution function designed for converting from x0, x1, etc to z00, z01, etc.
 # * Input:
@@ -275,50 +283,24 @@ def reverse_tuples(tuples):
 '''
 def simple_sub(sys, sub_map):
     sub_sys = {}
-    # A list of tuples version of the sub map for compatability with sympy's .sub() function
-    sub_list = reverse_tuples(list(sub_map.items()))
-    # A list of the old variables we're trying to remove based on the sub map
-    old_vars = set()
-    for sub_key in sub_map:
-        old_vars = old_vars.union(sub_map[sub_key].free_symbols)
 
-    # Perform substitutions on every equation in the system
-    for eq_key in sys:
-        sub_sys[eq_key] = simple_sub_loop(sys[eq_key], sub_list, old_vars)
-        
+    # Map old expressions to z variables for a single substitution pass.
+    ordered_subs = sorted(
+        [(sub_map[key], key) for key in sub_map],
+        key=lambda item: item[0].count_ops(),
+        reverse=True,
+    )
+
+    total_eqs = len(sys)
+    total_subs = len(ordered_subs)
+    print(f"simple_sub: substituting {total_eqs} equations with {total_subs} mappings...")
+
+    for eq_index, (eq_key, expr) in enumerate(sys.items(), start=1):
+        if eq_index % 20 == 0 or eq_index == 1 or eq_index == total_eqs:
+            print(f"  simple_sub progress: equation {eq_index}/{total_eqs} -> {eq_key}")
+        sub_sys[eq_key] = expr.subs(ordered_subs)
+
     return sub_sys
-
-'''
-# Handles the loop so we can return early if the substitutions are complete
-# * Input:
-#   - eq:
-#     - Data Type: sympy equation
-#     - Desc: Any sympy equation 
-#   - sub_list:
-#     - Data Type: List of tuples of sympy symbols/equations
-#     - Desc: A list of substitutions containing the old sympy eq/variable information in the first position of each tuple, 
-#             and the new sympy eq/variable that they can be substituted for in the second position of each tuple
-#   - old_vers:
-#     - Data Type: List of sympy symbols
-#     - Desc: A list of the vars in the equation before any substitution has begun that we're 
-#             trying to substitute out of the equation. Its used here to check if we've successfully removed 
-#             everything we're trying to remove.
-# * Output:
-#  - subbed_eq:
-#    - Data Type: sympy equation
-#    - Desc: A sympy equation in which all of the old variables that the function was attempting to remove as defined in
-#            the sub list have been swapped out to the best of the sympy substitute function's ability
-'''
-def simple_sub_loop(eq, sub_list, old_vars):
-    subbed_eq = eq
-    # This should have a safety loop cap for the length of the sub_list because in some extreme hypothetical you could shake out new substitutions until you've exhausted the list of possible things to look for I think
-    for i in range(len(sub_list)):
-        subbed_eq = subbed_eq.subs(sub_list)
-
-        # If the intersection between the set of old variables we're trying to remove and set of variables that could be in the substitution equation is empty, then the substitution process is complete
-        if (old_vars.isdisjoint(subbed_eq.free_symbols)):
-           return subbed_eq
-    return subbed_eq
 
 '''
 ### A comprehensive function for running stage three start to finish ###
@@ -353,6 +335,8 @@ def simple_sub_loop(eq, sub_list, old_vars):
 #         - Desc: A PP-implementable quadratic form sys. Will look something similar to: {"z_[0,0]":"z_[0,0]^2 + 2*z_[0,1]","z_[0,1]":"4*z_[1,1]", ...} 
 '''
 def stage_three(sys, sys_2={}, full_prod = False, standardize_main_var="", standardize_main_var_2=""):
+    print("Beginning Stage 3...")
+    clean_sys = None
     # If a main variable has been passed for standardization, standardize the system's names first
     if standardize_main_var:
         clean_sys = clean_names(sys,standardize_main_var)
@@ -360,21 +344,25 @@ def stage_three(sys, sys_2={}, full_prod = False, standardize_main_var="", stand
     if sys_2 != {} and standardize_main_var_2:
         clean_sys_2 = clean_names(sys_2,standardize_main_var_2)
     
+
     # If the system(s) required no cleaning, simply create a copy
     if not clean_sys:
         clean_sys = sys.copy()
     if sys_2 != {} and not clean_sys_2:
         clean_sys_2 = sys_2.copy()
-    
+    print("Finished cleaning names for stage 3. Starting product calculation...")
 
     # If a second system was passed, do the general product
     if sys_2 != {}:
+        print("Two systems passed. Running general product calculation for stage 3...")
         new_sys = general_product(clean_sys,clean_sys_2)
     # If a specifier was passed to run the slower general product method for a self product, do the general method
     elif full_prod: 
+        print("Running full product calculation for stage 3 self product...")
         new_sys = general_product(clean_sys,clean_sys)
     # If only one system was passed and no instruction was passed specifying otherwise, run the faster self_product calculation
     else:
+        print("Running optimized self product calculation for stage 3...")
         new_sys = self_product(clean_sys)
 
     return new_sys

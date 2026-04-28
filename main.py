@@ -3,6 +3,7 @@ from decompose_CRN import *
 from St0_Fns import *
 from St1_Fns import *
 from St2_Fns import *
+from St3_Fns import *
 import pickle # serialization
 from Tools.plotting_etc import *
 from sympy import *
@@ -124,6 +125,7 @@ class CompileHistory:
         self.bdsys = None
         self.bdsysIV = None
         self.bdsys_mainvar = None
+        self.pp_impl_system = None
 
 
 
@@ -249,7 +251,7 @@ flags:
     cache_filename    - If provided, caches the CompileHistory object to this file (should end with .pkl).
     filename          - If provided, writes a human-readable summary of the compilation process to this file (should end with .txt).  "SCALED",
 '''
-def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filename=None, checks = False, verbose = False, sim = ["TPP"], user_limit_sum = None, simtime = 20):
+def compile(system, mainvar, iv, pre_process = False, cache_filename="cacheTest.pk1", filename="cacheHuman.txt", checks = False, verbose = False, sim = ["TPP", "PP"], user_limit_sum = None, simtime = 20):
     #INITIAL SYSTEM 
     ch = CompileHistory()
     ch.input_iv = iv
@@ -307,6 +309,8 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
     max_est = get_limit_sum_est(ch.deg_2_non_homo_sys,ch.deg_2_non_homo_iv, interval = [0,10])
     # max_est = (num_deg2_vars/num_crn_vars)*user_limit_sum if user_limit_sum else 2*(num_deg2_vars/num_crn_vars)*max_est
     max_est = user_limit_sum if user_limit_sum else max_est
+
+    print("Stage 2 started")
     lam = get_lam_from_max(max_est)
     # ch.tpp_impl_iv[x0] = limit_sum_est
     ch.scaled_system = scale_sys(ch.deg_2_non_homo_sys, lam)
@@ -315,6 +319,13 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
     # Perform balancing dilation and convert initial values
     ch.bdsys = balancing_dilation(ch.scaled_system)
     ch.bdsysIV = convert_to_BD_IV(ch.bdsys,ch.scaled_IV,ch.deg_2_mainvar)
+    #At this point the system is TPP-implmentable
+    #Need to start implmeting 3rd statge
+    
+    #Create new varaibles
+
+    ch.pp_impl_system = stage_three(ch.bdsys)
+
 
 
 
@@ -333,7 +344,7 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
         print("Running requested simulations. This can take a long time. ...")
         run_simulations(ch, sim, simtime, DEBUG, verbose)
     print (f'Complete. Returning an object containing the full conversion history.')
-    return ch
+    return ch 
 
 '''Simulate the intermediate systems as requested by user input.'''
 def run_simulations(ch, sim,simtime,debug,verbose):
@@ -374,10 +385,19 @@ def run_simulations(ch, sim,simtime,debug,verbose):
         if debug or verbose:
             print("Simulating TPP-implementable system (qua deterministic system)...")
         # ch.bdsysIV[x0] = 2
+
         __dict__, lim = fsp(ch.bdsys,list(ch.bdsysIV.values()),time_span=(0,simtime*5),num_points = 250)
         if lim and (debug or verbose):
             print(f'(TPP-implementable) Limiting simulation value of main variable is {lim}.')
 
+    if "PP" in sim:
+        if debug or verbose:
+            print("Simulating PP-implementable system")
+        # ch.bdsysIV[x0] = 2
+        #pp, ppiv = ch.pp_impl_system,Symbol('x_1'), ch.bdsysIV.values() #clean_names(ch.pp_impl_system,Symbol('x_1'), ch.bdsysIV.values())
+        __dict__, lim = fsp(ch.pp_impl_system,list(ch.pp_impl_IV.values()),time_span=(0,simtime*5),num_points = 250)
+        if lim and (debug or verbose):
+            print(f'(PP-implementable) Limiting simulation value of main variable is {lim}.')
 
  
 """
