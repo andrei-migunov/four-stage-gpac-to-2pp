@@ -53,22 +53,13 @@ def half_prod(sys1):
     # Creates the mappings for the z_vars to be utilized in substitution later
     z_var_map = {}
 
-    total_vars = len(sys1)
-    total_pairs = total_vars * (total_vars + 1) // 2
-    print(f"half_prod: computing {total_pairs} upper-triangular z entries from {total_vars} variables...")
-
     # Loops to make all of the pairs
     m = 0
-    pair_index = 0
     for var1 in sys1.keys():
         n = 0
         for var2 in sys1.keys():
             #Checks for lower half of matrix
             if m <= n:
-                pair_index += 1
-                if pair_index % 20 == 0 or pair_index == 1 or pair_index == total_pairs:
-                    print(f"  half_prod progress: {pair_index}/{total_pairs} (var1={var1}, var2={var2})")
-
                 #Adds new z variables to system
                 #z_system[symbols(f"z_[{i},{j}]")] = get_z_derivative_half_prod(sys1, var1, var2, i, j)
                 #print(f"z_[{i},{j}]: ",get_z_derivative(sys1, var1, var2, i, j))
@@ -231,10 +222,8 @@ def sym_idx_parser(raw_symbol):
 '''
 def self_product(sys):
     # Take the half product
-    print("Running half product calculation for stage 3 self product...")
-    prod_sys, var_map = half_prod(sys) 
+    prod_sys, var_map = half_prod(sys)
     # Convert the variables to z's
-    print("Running simple_sub for stage 3 self product...")
     final_sys = simple_sub(prod_sys, var_map)
     return final_sys
 
@@ -267,6 +256,9 @@ def general_product(sys1, sys2):
 #         - Data Type: List of tuples
 #         - Desc: A list of tuples in which every tuple has the object in its first position swapped with the second position
 '''
+def reverse_tuples(tuples):
+    return [tuple[::-1] for tuple in tuples]
+
 '''
 # A simple substitution function designed for converting from x0, x1, etc to z00, z01, etc.
 # * Input:
@@ -281,7 +273,11 @@ def general_product(sys1, sys2):
 #         - Data Type: Dict
 #         - Desc: A system of equations with the variables defined in the sub_map removed. Should be passed in a format similar to: {"x_0": "x_0 * (-x_0**2 + 7*x_0*x_1 - x_1**2)", "x_1":"x_0 * (x_0**2 - 7*x_0*x_1 + x_1**2)"}
 '''
-def simple_sub(sys, sub_map):
+def simple_sub_old(sys, sub_map):
+    """
+    Original substitution method.
+    Kept so the old code runs first.
+    """
     sub_sys = {}
 
     # Map old expressions to z variables for a single substitution pass.
@@ -293,14 +289,277 @@ def simple_sub(sys, sub_map):
 
     total_eqs = len(sys)
     total_subs = len(ordered_subs)
-    print(f"simple_sub: substituting {total_eqs} equations with {total_subs} mappings...")
+    print(f"simple_sub_old: substituting {total_eqs} equations with {total_subs} mappings...")
 
     for eq_index, (eq_key, expr) in enumerate(sys.items(), start=1):
         if eq_index % 20 == 0 or eq_index == 1 or eq_index == total_eqs:
-            print(f"  simple_sub progress: equation {eq_index}/{total_eqs} -> {eq_key}")
+            print(f"  simple_sub_old progress: equation {eq_index}/{total_eqs} -> {eq_key}")
         sub_sys[eq_key] = expr.subs(ordered_subs)
 
     return sub_sys
+
+
+def _stage3_make_z_symbol_from_pair(a, b):
+    """
+    Creates z symbols using the same naming convention as half_prod.
+    """
+
+    i = sym_idx_parser(a)
+    j = sym_idx_parser(b)
+
+    if (isinstance(i, list) and isinstance(j, int)) or \
+       (isinstance(i, int) and isinstance(j, list)):
+
+        if isinstance(i, list):
+            i_and_j = i + [j]
+        else:
+            i_and_j = [i] + j
+
+        return Symbol(f"z_{i_and_j}")
+
+    return Symbol(f"z_[{i},{j}]")
+
+
+def _stage3_get_existing_z_for_pair(a, b, known_z_vars):
+    """
+    Since half_prod only creates upper-triangular z variables,
+    try both a,b and b,a.
+    """
+
+    cand1 = _stage3_make_z_symbol_from_pair(a, b)
+    cand2 = _stage3_make_z_symbol_from_pair(b, a)
+
+    if cand1 in known_z_vars:
+        return cand1
+
+    if cand2 in known_z_vars:
+        return cand2
+
+    raise ValueError(
+        f"Could not find a z variable for old product {a}*{b}. "
+        f"Tried {cand1} and {cand2}."
+    )
+
+
+def _stage3_expand_old_factor(factor, old_vars):
+    """
+    Turns x_0**3 into [x_0, x_0, x_0].
+    """
+
+    if factor in old_vars:
+        return [factor]
+
+    if isinstance(factor, Pow) and factor.base in old_vars and factor.exp.is_Integer:
+        exp = int(factor.exp)
+
+        if exp < 0:
+            raise ValueError(f"Negative old-variable power is not supported: {factor}")
+
+        return [factor.base] * exp
+
+    return None
+
+
+def _stage3_old_var_order_from_sub_map(sub_map):
+    """
+    Makes a stable ordering of old variables using the order in sub_map.
+    """
+
+    ordered = []
+
+    for z_var, old_expr in sub_map.items():
+        for sym in sorted(old_expr.free_symbols, key=lambda s: str(s)):
+            if sym not in ordered:
+                ordered.append(sym)
+
+    return ordered
+
+
+def _stage3_repair_one_term(term, old_vars, known_z_vars, old_var_order):
+    """
+    Converts remaining old-variable factors in one monomial into z variables.
+
+    half_prod convention:
+        z_[i,i] = x_i^2
+        z_[i,j] = 2*x_i*x_j for i != j
+
+    Therefore:
+        x_i*x_j = z_[i,j]/2 if i != j
+        x_i^2 = z_[i,i]
+    """
+
+    coeff, factors = term.as_coeff_mul()
+
+    old_factors = []
+    other_factors = []
+
+    for factor in factors:
+        expanded_old = _stage3_expand_old_factor(factor, old_vars)
+
+        if expanded_old is None:
+            other_factors.append(factor)
+        else:
+            old_factors.extend(expanded_old)
+
+    if len(old_factors) == 0:
+        return term
+
+    if len(old_factors) % 2 != 0:
+        raise ValueError(
+            f"Cannot repair term with odd number of old-variable factors:\n"
+            f"{term}\n"
+            f"Old factors: {old_factors}"
+        )
+
+    order = {v: i for i, v in enumerate(old_var_order)}
+    old_factors = sorted(old_factors, key=lambda s: order.get(s, 10**9))
+
+    result = coeff
+
+    if other_factors:
+        result *= Mul(*other_factors)
+
+    for i in range(0, len(old_factors), 2):
+        a = old_factors[i]
+        b = old_factors[i + 1]
+
+        z = _stage3_get_existing_z_for_pair(a, b, known_z_vars)
+
+        if a == b:
+            result *= z
+        else:
+            result *= z / Integer(2)
+
+    return expand(result)
+
+
+def _stage3_repair_expr(expr, old_vars, known_z_vars, old_var_order):
+    expr = expand(expr)
+
+    terms = Add.make_args(expr)
+
+    repaired_terms = [
+        _stage3_repair_one_term(term, old_vars, known_z_vars, old_var_order)
+        for term in terms
+    ]
+
+    return expand(Add(*repaired_terms))
+
+
+def simple_sub(sys, sub_map):
+    """
+    Minimal change version.
+
+    First tries the original simple_sub behavior.
+    If that leaves old variables like x_0, x_1, or v_[...] in the RHS,
+    it runs a repair pass to close the system in z variables.
+    """
+
+    # First run the original method.
+    sub_sys = simple_sub_old(sys, sub_map)
+
+    old_vars = set()
+
+    for z_var in sub_map:
+        old_vars |= sub_map[z_var].free_symbols
+
+    remaining_old_vars = set()
+
+    for expr in sub_sys.values():
+        remaining_old_vars |= old_vars.intersection(expr.free_symbols)
+
+    if not remaining_old_vars:
+        print("simple_sub_old produced a closed z-system. No repair needed.")
+        return sub_sys
+
+    print("simple_sub_old left old variables in the system.")
+    print(f"Remaining old variables: {sorted(remaining_old_vars, key=lambda s: str(s))}")
+    print("Running Stage 3 repair pass...")
+
+    known_z_vars = set(sub_map.keys())
+    old_var_order = _stage3_old_var_order_from_sub_map(sub_map)
+
+    repaired_sys = {}
+    total_eqs = len(sub_sys)
+
+    for eq_index, (eq_key, expr) in enumerate(sub_sys.items(), start=1):
+        if eq_index % 20 == 0 or eq_index == 1 or eq_index == total_eqs:
+            print(f"  repair progress: equation {eq_index}/{total_eqs} -> {eq_key}")
+
+        repaired_expr = _stage3_repair_expr(
+            expr,
+            old_vars,
+            known_z_vars,
+            old_var_order
+        )
+
+        still_remaining = old_vars.intersection(repaired_expr.free_symbols)
+
+        if still_remaining:
+            raise ValueError(
+                f"Stage 3 repair failed for {eq_key}. "
+                f"Remaining old variables: {still_remaining}. "
+                f"Expression: {repaired_expr}"
+            )
+
+        repaired_sys[eq_key] = repaired_expr
+
+    print("Stage 3 repair pass completed. System is now closed.")
+    return repaired_sys
+
+
+'''
+# Handles the loop so we can return early if the substitutions are complete
+# * Input:
+#   - eq:
+#     - Data Type: sympy equation
+#     - Desc: Any sympy equation 
+#   - sub_list:
+#     - Data Type: List of tuples of sympy symbols/equations
+#     - Desc: A list of substitutions containing the old sympy eq/variable information in the first position of each tuple, 
+#             and the new sympy eq/variable that they can be substituted for in the second position of each tuple
+#   - old_vers:
+#     - Data Type: List of sympy symbols
+#     - Desc: A list of the vars in the equation before any substitution has begun that we're 
+#             trying to substitute out of the equation. Its used here to check if we've successfully removed 
+#             everything we're trying to remove.
+# * Output:
+#  - subbed_eq:
+#    - Data Type: sympy equation
+#    - Desc: A sympy equation in which all of the old variables that the function was attempting to remove as defined in
+#            the sub list have been swapped out to the best of the sympy substitute function's ability
+'''
+def simple_sub_loop(lhs_z, eq, sub_list, old_vars):
+    subbed_eq = eq
+    # This should have a safety loop cap for the length of the sub_list because in some extreme hypothetical you could shake out new substitutions until you've exhausted the list of possible things to look for I think
+    for i in range(len(sub_list)):
+        subbed_eq = subbed_eq.subs(sub_list)
+
+        # If the intersection between the set of old variables we're trying to remove and set of variables that could be in the substitution equation is empty, then the substitution process is complete
+        if (old_vars.isdisjoint(subbed_eq.free_symbols)):
+           return subbed_eq
+
+    # If the original repeated substitution did not close the equation, repair the remaining old-variable products.
+    remaining_old = old_vars.intersection(subbed_eq.free_symbols)
+
+    if not remaining_old:
+        return subbed_eq
+
+    print(f"simple_sub_loop: old variables remain in {lhs_z}. Running repair pass.")
+    print(f"  Remaining old vars: {sorted(remaining_old, key=lambda s: str(s))}")
+
+    known_z_vars = {z_var for old_expr, z_var in sub_list}
+    old_var_order = _stage3_old_var_order_from_sub_list(sub_list)
+
+    repaired = _stage3_repair_expr(
+        subbed_eq,
+        lhs_z,
+        old_vars,
+        known_z_vars,
+        old_var_order
+    )
+
+    return repaired
 
 '''
 ### A comprehensive function for running stage three start to finish ###
@@ -335,8 +594,9 @@ def simple_sub(sys, sub_map):
 #         - Desc: A PP-implementable quadratic form sys. Will look something similar to: {"z_[0,0]":"z_[0,0]^2 + 2*z_[0,1]","z_[0,1]":"4*z_[1,1]", ...} 
 '''
 def stage_three(sys, sys_2={}, full_prod = False, standardize_main_var="", standardize_main_var_2=""):
-    print("Beginning Stage 3...")
     clean_sys = None
+    clean_sys_2 = None
+
     # If a main variable has been passed for standardization, standardize the system's names first
     if standardize_main_var:
         clean_sys = clean_names(sys,standardize_main_var)
@@ -344,25 +604,21 @@ def stage_three(sys, sys_2={}, full_prod = False, standardize_main_var="", stand
     if sys_2 != {} and standardize_main_var_2:
         clean_sys_2 = clean_names(sys_2,standardize_main_var_2)
     
-
     # If the system(s) required no cleaning, simply create a copy
     if not clean_sys:
         clean_sys = sys.copy()
     if sys_2 != {} and not clean_sys_2:
         clean_sys_2 = sys_2.copy()
-    print("Finished cleaning names for stage 3. Starting product calculation...")
+    
 
     # If a second system was passed, do the general product
     if sys_2 != {}:
-        print("Two systems passed. Running general product calculation for stage 3...")
         new_sys = general_product(clean_sys,clean_sys_2)
     # If a specifier was passed to run the slower general product method for a self product, do the general method
     elif full_prod: 
-        print("Running full product calculation for stage 3 self product...")
         new_sys = general_product(clean_sys,clean_sys)
     # If only one system was passed and no instruction was passed specifying otherwise, run the faster self_product calculation
     else:
-        print("Running optimized self product calculation for stage 3...")
         new_sys = self_product(clean_sys)
 
     return new_sys

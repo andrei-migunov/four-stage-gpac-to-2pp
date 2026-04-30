@@ -9,6 +9,10 @@ from Tools.plotting_etc import *
 from sympy import *
 import sys
 import os
+import ast
+import numpy as np
+from collections import defaultdict
+from test_garrett import check_stage3_good_for_paper
 
 # try:
 #     from ppsim import *
@@ -126,6 +130,8 @@ class CompileHistory:
         self.bdsysIV = None
         self.bdsys_mainvar = None
         self.pp_impl_system = None
+        self.pp_impl_IV = None
+        self.pp_impl_mainvar = None
 
 
 
@@ -236,6 +242,212 @@ def fetch_cached(filename):
         raise Exception(f"Tried to deserialize an object that probably had not been cached in a previous execution, or simply {filename} does not exist locally.")
 
 
+def _stage3_parse_idx(raw_symbol):
+    """
+    Local helper for creating Stage 3 initial values.
+    Parses symbols like x_1, x_0, v_[0,1,0], etc.
+    """
+    raw_symbol = str(raw_symbol)
+
+    if "_" in raw_symbol:
+        numeric_part = raw_symbol.split("_", 1)[1]
+        return ast.literal_eval(numeric_part)
+
+    if "[" in raw_symbol:
+        numeric_part = raw_symbol.split("[", 1)[1]
+        numeric_part = "[" + numeric_part
+        return ast.literal_eval(numeric_part)
+
+    numeric_part = ''.join(ch for ch in raw_symbol if ch.isdigit())
+    return ast.literal_eval(numeric_part)
+
+
+def _stage3_make_z_symbol(var1, var2, var_order=None):
+    """
+    Creates the same kind of z-symbol used by the Stage 3 half product.
+
+    Examples:
+        x_1, x_2 -> z_[1,2]
+        x_1, v_[0,1,0] -> z_[1,0,1,0]
+    """
+
+    if var_order is not None:
+        order = {v: i for i, v in enumerate(var_order)}
+        if order[var2] < order[var1]:
+            var1, var2 = var2, var1
+
+    i = _stage3_parse_idx(var1)
+    j = _stage3_parse_idx(var2)
+
+    if (isinstance(i, list) and isinstance(j, int)) or \
+       (isinstance(i, int) and isinstance(j, list)):
+
+        if isinstance(i, list):
+            i_and_j = i + [j]
+        else:
+            i_and_j = [i] + j
+
+        return Symbol(f"z_{i_and_j}")
+
+    return Symbol(f"z_[{i},{j}]")
+
+
+def make_stage_three_iv(old_sys, old_iv):
+    """
+    Builds the initial values for the Stage 3 half-product system.
+
+    Convention:
+        z_[i,i] = x_i^2
+        z_[i,j] = 2*x_i*x_j for i != j
+    """
+
+    new_iv = {}
+    var_order = list(old_sys.keys())
+
+    for m, var1 in enumerate(var_order):
+        for n, var2 in enumerate(var_order):
+            if m <= n:
+                z_var = _stage3_make_z_symbol(var1, var2, var_order)
+
+                if var1 == var2:
+                    new_iv[z_var] = old_iv[var1] ** 2
+                else:
+                    new_iv[z_var] = 2 * old_iv[var1] * old_iv[var2]
+
+    return new_iv
+
+
+def make_stage_three_square_mainvar(old_mainvar, old_sys):
+    """
+    If old tracked variable is x_1, this returns z_[1,1].
+    """
+    var_order = list(old_sys.keys())
+    return _stage3_make_z_symbol(old_mainvar, old_mainvar, var_order)
+
+
+def _stage3_norm_symbol_name(sym):
+    return str(sym).replace(" ", "")
+
+
+def recover_stage3_marked_sum_trace(soln, pp_system, main_index=1):
+    """
+    Recover original x_1(t) from the Stage 3 half-product variables.
+
+    Half-product convention:
+        z_[i,i] = x_i^2
+        z_[i,j] = 2*x_i*x_j for i != j
+
+    Since the TPP system has total mass 1:
+        x_1 = z_[1,1] + 1/2 * sum_{j != 1} z_[1,j]
+    """
+
+    names = list(pp_system.keys())
+    name_to_col = {name: i for i, name in enumerate(names)}
+
+    ys = np.asarray(soln.ys)
+    recovered = np.zeros(len(soln.ts))
+    used_vars = []
+
+    diag_name = f"z_[{main_index},{main_index}]"
+    prefix = f"z_[{main_index},"
+
+    for var in names:
+        s = _stage3_norm_symbol_name(var)
+
+        if s == diag_name:
+            recovered += ys[:, name_to_col[var]]
+            used_vars.append((var, 1.0))
+
+        elif s.startswith(prefix):
+            recovered += 0.5 * ys[:, name_to_col[var]]
+            used_vars.append((var, 0.5))
+
+    return recovered, used_vars
+
+
+def run_stage3_diagnostics(ch, simtime, tpp_lim=None, debug=False, verbose=False):
+    """
+    Runs Stage 3 simulation and prints:
+      - raw z_[1,1]
+      - sqrt(z_[1,1])
+      - marked-sum recovered x_1
+      - mass conservation
+      - comparison against TPP
+    """
+
+    print("Running Stage 3 diagnostic simulation...")
+
+    soln, lim = fsp(
+        ch.pp_impl_system,
+        list(ch.pp_impl_IV.values()),
+        mainvar=ch.pp_impl_mainvar,
+        time_span=(0, simtime * 5),
+        num_points=250
+    )
+
+    if soln is None:
+        print("Stage 3 diagnostic simulation failed.")
+        return None, None
+
+    print("Stage 3 diagnostic simulation worked.")
+
+    with open("stage3_diagnostic_solution.pkl", "wb") as f:
+        pickle.dump(
+            {
+                "soln": soln,
+                "lim": lim,
+                "mainvar": ch.pp_impl_mainvar,
+                "system": ch.pp_impl_system,
+                "iv": ch.pp_impl_IV,
+            },
+            f
+        )
+
+    print("Saved Stage 3 diagnostic solution to stage3_diagnostic_solution.pkl")
+
+    print("\n===== Stage 3 Diagnostics =====")
+
+    if lim is not None:
+        print(f"Raw limiting simulation value of {ch.pp_impl_mainvar}: {lim}")
+        sqrt_value = np.sqrt(max(float(lim), 0.0))
+        print(f"sqrt recovery from {ch.pp_impl_mainvar}: {sqrt_value}")
+    else:
+        sqrt_value = None
+        print("No limiting value was returned for the Stage 3 square main variable.")
+
+    marked_trace, used_vars = recover_stage3_marked_sum_trace(
+        soln,
+        ch.pp_impl_system,
+        main_index=1
+    )
+
+    marked_final = float(marked_trace[-1])
+
+    print(f"Marked-sum recovered original x_1 final value: {marked_final}")
+    print(f"Used {len(used_vars)} Stage 3 variables in marked-sum recovery.")
+    print("First 20 marked variables used:")
+
+    for var, coeff in used_vars[:20]:
+        print(f"  {coeff} * {var}")
+
+    total_mass = float(np.sum(np.asarray(soln.ys)[-1, :]))
+
+    print(f"Final Stage 3 total mass: {total_mass}")
+    print(f"Mass conservation error |mass - 1|: {abs(total_mass - 1.0)}")
+
+    if tpp_lim is not None:
+        tpp_float = float(tpp_lim)
+
+        print(f"TPP final x_1 value: {tpp_float}")
+        print(f"Difference |marked-sum Stage 3 - TPP|: {abs(marked_final - tpp_float)}")
+
+        if sqrt_value is not None:
+            print(f"Difference |sqrt Stage 3 - TPP|: {abs(sqrt_value - tpp_float)}")
+
+    print("===== End Stage 3 Diagnostics =====\n")
+
+    return soln, marked_final
+
 ''' The main function.
 
 system: a general-purpose analog computer represented as a PIVP represented as a dictionary mapping variable names to those variables' ODEs' expressions.
@@ -319,12 +531,16 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename="cacheTest.
     # Perform balancing dilation and convert initial values
     ch.bdsys = balancing_dilation(ch.scaled_system)
     ch.bdsysIV = convert_to_BD_IV(ch.bdsys,ch.scaled_IV,ch.deg_2_mainvar)
+    ch.bdsys_mainvar = Symbol('x_1')
     #At this point the system is TPP-implmentable
     #Need to start implmeting 3rd statge
     
     #Create new varaibles
 
     ch.pp_impl_system = stage_three(ch.bdsys)
+    check_stage3_good_for_paper(ch.pp_impl_system)
+    ch.pp_impl_IV = make_stage_three_iv(ch.bdsys, ch.bdsysIV)
+    ch.pp_impl_mainvar = make_stage_three_square_mainvar(ch.bdsys_mainvar, ch.bdsys)
 
 
 
@@ -347,8 +563,11 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename="cacheTest.
     return ch 
 
 '''Simulate the intermediate systems as requested by user input.'''
+'''Simulate the intermediate systems as requested by user input.'''
 def run_simulations(ch, sim,simtime,debug,verbose):
     
+    tpp_lim = None
+
     if "GPAC" in sim:
         if debug or verbose:
             print("Simulating (cleaned variable names) input system...")
@@ -381,24 +600,42 @@ def run_simulations(ch, sim,simtime,debug,verbose):
         if lim and (debug or verbose):
             print(f'(SCALED) Limiting simulation value of main variable is {lim}.')
 
-    if "TPP" in sim:
+    if "TPP" in sim or "PP_DIAG" in sim:
         if debug or verbose:
             print("Simulating TPP-implementable system (qua deterministic system)...")
         # ch.bdsysIV[x0] = 2
 
-        __dict__, lim = fsp(ch.bdsys,list(ch.bdsysIV.values()),time_span=(0,simtime*5),num_points = 250)
-        if lim and (debug or verbose):
-            print(f'(TPP-implementable) Limiting simulation value of main variable is {lim}.')
+        __dict__, tpp_lim = fsp(
+            ch.bdsys,
+            list(ch.bdsysIV.values()),
+            mainvar=ch.bdsys_mainvar,
+            time_span=(0,simtime*5),
+            num_points = 250
+        )
+
+        if tpp_lim and (debug or verbose):
+            print(f'(TPP-implementable) Limiting simulation value of main variable is {tpp_lim}.')
 
     if "PP" in sim:
         if debug or verbose:
             print("Simulating PP-implementable system")
         # ch.bdsysIV[x0] = 2
         #pp, ppiv = ch.pp_impl_system,Symbol('x_1'), ch.bdsysIV.values() #clean_names(ch.pp_impl_system,Symbol('x_1'), ch.bdsysIV.values())
-        __dict__, lim = fsp(ch.pp_impl_system,list(ch.pp_impl_IV.values()),time_span=(0,simtime*5),num_points = 250)
+        __dict__, lim = fsp(
+            ch.pp_impl_system,
+            list(ch.pp_impl_IV.values()),
+            mainvar=ch.pp_impl_mainvar,
+            time_span=(0,simtime*5),
+            num_points = 250
+        )
+
         if lim and (debug or verbose):
             print(f'(PP-implementable) Limiting simulation value of main variable is {lim}.')
+            original_final_value = np.sqrt(max(float(lim), 0.0))
+            print(f'Original final value (sqrt of {ch.pp_impl_mainvar}): {original_final_value}')
 
+    if "PP_DIAG" in sim:
+        run_stage3_diagnostics(ch, simtime, tpp_lim=tpp_lim, debug=debug, verbose=verbose)
  
 """
 Reads a .txt file describing a system, initial values, and optional flags,
