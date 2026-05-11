@@ -9,7 +9,15 @@ def test():
               "d":"c-c*d"})
     
     iv = sympify({"a":3,"b":2,"c":3,"d":1})
-    ch = compile(input,Symbol("a"),iv, cache_filename = "Test1CompileHistory.pkl", filename="Test1Out.txt", pre_process = True) # Input system, Primary variable, Input IV
+    ch = compile(
+        input,
+        Symbol("d"),
+        iv,
+        cache_filename="Test3CompileHistory.pkl",
+        filename="Test3Out.txt",
+        sim=["PP_DIAG"],
+        simtime=2
+    )
 
 def test2():
     return compile_from_file("test_compile_in.txt")
@@ -101,6 +109,6 @@ def test4v2():
 if __name__ == "__main__":
     import multiprocessing as mp
     mp.freeze_support()       
-    test3()
+    test()
     #test4v2()
 #test3()

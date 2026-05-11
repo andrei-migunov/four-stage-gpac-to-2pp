@@ -538,7 +538,7 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename="cacheTest.
     #Create new varaibles
 
     ch.pp_impl_system = stage_three(ch.bdsys)
-    check_stage3_good_for_paper(ch.pp_impl_system)
+
     ch.pp_impl_IV = make_stage_three_iv(ch.bdsys, ch.bdsysIV)
     ch.pp_impl_mainvar = make_stage_three_square_mainvar(ch.bdsys_mainvar, ch.bdsys)
 
