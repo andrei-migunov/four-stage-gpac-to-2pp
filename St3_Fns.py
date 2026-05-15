@@ -565,15 +565,8 @@ def _stage3_add_lifted_transfer(z_system, var_order, monomial, source, target, a
 
         source_scale = _stage3_pair_scale(source, partner)
 
-        # Desired old expression is:
-        #   2 * amount * M * partner
-        #
-        # source_z * context_z represents:
-        #   source_scale * context_scale * source * partner * remaining_factors
-        #
-        # Since M = source * remaining_factors,
-        # coefficient is:
-        #   2 * amount / (source_scale * context_scale)
+
+
         lifted_coeff = simplify(
             Rational(2, 1) * amount / (source_scale * context_scale)
         )
@@ -593,11 +586,6 @@ def stage_three_transfer_lift(sys):
       2. Decomposes each monomial's coefficient vector into conservative transfers.
       3. Lifts each old-variable transfer into a z-variable transfer.
 
-    This is designed to preserve:
-      - closure in z variables,
-      - quadratic form,
-      - conservation,
-      - negative terms containing their own variable.
     """
 
     monomial_coeffs, var_order = _stage3_collect_cubic_monomial_coeffs(sys)
@@ -615,7 +603,7 @@ def stage_three_transfer_lift(sys):
         transfers = _stage3_decompose_monomial_coeffs_into_transfers(
             monomial,
             coeffs,
-            var_order
+            var_order  
         )
 
         for source, target, amount in transfers:

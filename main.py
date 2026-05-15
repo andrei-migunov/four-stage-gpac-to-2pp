@@ -4,7 +4,9 @@ from St0_Fns import *
 from St1_Fns import *
 from St2_Fns import *
 from St3_Fns import *
-import pickle # serialization
+import pickle
+
+
 from Tools.plotting_etc import *
 from sympy import *
 import sys
@@ -412,7 +414,6 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename="cacheTest.
     #At this point the system is TPP-implmentable
     #Need to start implmeting 3rd statge
     
-    #Create new varaibles
 
     ch.pp_impl_system = stage_three(ch.bdsys)
 
