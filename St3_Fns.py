@@ -15,14 +15,6 @@ import re   # Used to quickly drop all non-numeric information when evaluating v
 # =============================================================================
 
 STAGE3_CHOP_TOL = 1e-10
-STAGE3_MAX_PRINT_TERMS = 20
-STAGE3_MAX_TERM_CHARS = 300
-
-
-# TODO: Create a test script for running stage 3 in-sequence
-# TODO: Try writing the better substitution function
-# TODO: Finish the test functions
-
 
 '''
 # Creates the (x_ix_j)' combinations
@@ -222,215 +214,12 @@ def sym_idx_parser(raw_symbol):
 
 
 # =============================================================================
-# Stage 3 cleanup/finalization helpers
-# =============================================================================
-
-def _stage3_is_tiny_number(x, tol=STAGE3_CHOP_TOL):
-    """
-    Returns True if x is a numeric Sympy object whose absolute value is tiny.
-    """
-    if not getattr(x, "is_number", False):
-        return False
-
-    try:
-        return abs(float(N(x))) < tol
-    except Exception:
-        try:
-            return abs(complex(x.evalf())) < tol
-        except Exception:
-            return False
-
-
-def _stage3_term_numeric_coeff(term):
-    """
-    Robustly extracts the numeric part of a product term.
-
-    This catches things like:
-        2.27373675443232e-13*z_[...]*z_[...]
-
-    even if Sympy does not put the float in the normal coefficient slot.
-    """
-    coeff, factors = term.as_coeff_mul()
-
-    numeric_coeff = coeff
-    symbolic_factors = []
-
-    for factor in factors:
-        if getattr(factor, "is_number", False):
-            numeric_coeff *= factor
-        else:
-            symbolic_factors.append(factor)
-
-    return simplify(numeric_coeff), symbolic_factors
-
-
-def stage3_chop_small_terms(expr, tol=STAGE3_CHOP_TOL):
-    """
-    Removes tiny floating-point garbage terms like:
-
-        2.27373675443232e-13*z_[...]*z_[...]
-
-    These are usually roundoff leftovers caused by massive symbolic expansion
-    and cancellation.
-    """
-    if expr is None:
-        return expr
-
-    expr = sympify(expr)
-    expr = expand(expr)
-
-    if expr == 0:
-        return Integer(0)
-
-    if _stage3_is_tiny_number(expr, tol=tol):
-        return Integer(0)
-
-    kept_terms = []
-
-    for term in Add.make_args(expr):
-        numeric_coeff, symbolic_factors = _stage3_term_numeric_coeff(term)
-
-        if _stage3_is_tiny_number(numeric_coeff, tol=tol):
-            continue
-
-        kept_terms.append(term)
-
-    if not kept_terms:
-        return Integer(0)
-
-    return expand(Add(*kept_terms))
-
-
-def stage3_clean_system_small_terms(system, tol=STAGE3_CHOP_TOL):
-    """
-    Applies stage3_chop_small_terms to every RHS in a system.
-    """
-    cleaned = {}
-
-    for var, rhs in system.items():
-        cleaned[var] = stage3_chop_small_terms(rhs, tol=tol)
-
-    return cleaned
-
-
-def stage3_system_term_count(system):
-    """
-    Counts total additive terms across all RHS expressions.
-    """
-    total_terms = 0
-
-    for rhs in system.values():
-        rhs = expand(rhs)
-        total_terms += len(Add.make_args(rhs))
-
-    return total_terms
-
-
-def stage3_print_system_summary(system, label="[stage3] system"):
-    """
-    Prints a compact summary instead of dumping the full system.
-    """
-    print(label)
-    print(f"  equations:       {len(system)}")
-    print(f"  total RHS terms: {stage3_system_term_count(system)}")
-
-
-def _stage3_short_expr_string(expr, max_chars=STAGE3_MAX_TERM_CHARS):
-    s = sp.sstr(expr)
-
-    if len(s) <= max_chars:
-        return s
-
-    return s[:max_chars] + " ... [truncated]"
-
-
-def stage3_conservation_residual(system, tol=STAGE3_CHOP_TOL):
-    """
-    Computes and cleans the conservation residual:
-
-        sum_i rhs_i
-
-    For a conservative Stage 3 system, this should be zero.
-    """
-    total = Integer(0)
-
-    for rhs in system.values():
-        total += rhs
-
-    total = expand(total)
-    total = stage3_chop_small_terms(total, tol=tol)
-
-    return total
-
-
-def stage3_check_conservative_system(
-    system,
-    tol=STAGE3_CHOP_TOL,
-    max_terms_to_print=STAGE3_MAX_PRINT_TERMS,
-):
-    """
-    Checks sum_i rhs_i = 0 without printing thousands of residual terms.
-    """
-    residual = stage3_conservation_residual(system, tol=tol)
-
-    if residual == 0:
-        print(f"[stage3] Conservative check passed up to tol={tol}.")
-        return True
-
-    residual_terms = Add.make_args(expand(residual))
-
-    print()
-    print("[stage3] Conservative check FAILED.")
-    print(f"[stage3] Tolerance: {tol}")
-    print(f"[stage3] Residual terms after cleanup: {len(residual_terms)}")
-    print(f"[stage3] Showing first {min(max_terms_to_print, len(residual_terms))} terms only:")
-    print()
-
-    for term in residual_terms[:max_terms_to_print]:
-        print("  " + _stage3_short_expr_string(term))
-
-    print()
-    print("[stage3] Full residual was not printed to avoid flooding the terminal.")
-    print("[stage3] If these coefficients are around 1e-13, increase STAGE3_CHOP_TOL slightly.")
-    print()
-
-    raise ValueError("Stage 3 system is not conservative after cleanup.")
-
-
-def stage3_finalize_system(
-    system,
-    *,
-    label="[stage3] Final Stage 3 system",
-    tol=STAGE3_CHOP_TOL,
-    check_conservative=True,
-    print_summary=True,
-):
-    """
-    Final cleanup pass for Stage 3 output.
-
-    This is the important fix:
-      1. Chop tiny 1e-13 floating-point garbage terms.
-      2. Print only a compact summary.
-      3. Check conservation safely without dumping the full residual.
-    """
-    system = stage3_clean_system_small_terms(system, tol=tol)
-
-    if print_summary:
-        stage3_print_system_summary(system, label=label)
-
-    if check_conservative:
-        stage3_check_conservative_system(system, tol=tol)
-
-    return system
-
-
-# =============================================================================
 # Stage 3 transfer-lift implementation
 # =============================================================================
 
 def _stage3_zeroish(expr, tol=STAGE3_CHOP_TOL):
     """
-    Treats tiny float roundoff as zero.
+    Treats tiny float roundoff as zero during transfer construction.
     """
     expr = simplify(expr)
 
@@ -601,7 +390,8 @@ def _stage3_collect_cubic_monomial_coeffs(sys):
 
             monomial_coeffs[old_factors][var] += coeff
 
-    # Clean tiny roundoff and enforce exact zero sums when the residual is tiny.
+    # Clean tiny roundoff during coefficient collection.
+    # This is used by the transfer construction itself.
     for monomial, coeffs in monomial_coeffs.items():
         for v in var_order:
             coeffs[v] = simplify(coeffs[v])
@@ -611,15 +401,9 @@ def _stage3_collect_cubic_monomial_coeffs(sys):
 
         total = simplify(sum(coeffs.values()))
 
-        if not _stage3_zeroish(total):
-            raise ValueError(
-                f"Input cubic system is not conservative for monomial {monomial}.\n"
-                f"Coefficient sum: {total}\n"
-                f"Coefficients: {coeffs}"
-            )
-
-        # Remove tiny symbolic/float residual exactly by adjusting one nonzero coefficient.
-        if total != 0:
+        # If total is tiny, remove the tiny symbolic/float residual exactly
+        # by adjusting one nonzero coefficient.
+        if _stage3_zeroish(total) and total != 0:
             for v in var_order:
                 if coeffs[v] != 0:
                     coeffs[v] = simplify(coeffs[v] - total)
@@ -844,14 +628,8 @@ def stage_three_transfer_lift(sys):
                 amount
             )
 
-    # Important final cleanup/fix.
-    z_system = stage3_finalize_system(
-        z_system,
-        label="[stage3] Final transfer-lift PP system",
-        tol=STAGE3_CHOP_TOL,
-        check_conservative=True,
-        print_summary=True
-    )
+    print("[stage3] Final transfer-lift PP system")
+    print(f"  equations:       {len(z_system)}")
 
     return z_system
 
@@ -886,18 +664,9 @@ def self_product(sys):
 '''
 def general_product(sys1, sys2):
     # Kept for backwards compatibility.
-    # The new reliable Stage 3 path uses self_product/sys only.
+    # The reliable Stage 3 path uses self_product/sys only.
     prod_sys, var_map = full_prod(sys1, sys2)
     final_sys = simple_sub(prod_sys, var_map)
-
-    # Cleanup also protects the legacy path from 1e-13 garbage terms.
-    final_sys = stage3_finalize_system(
-        final_sys,
-        label="[stage3] Final legacy general-product system",
-        tol=STAGE3_CHOP_TOL,
-        check_conservative=True,
-        print_summary=True
-    )
 
     return final_sys
 

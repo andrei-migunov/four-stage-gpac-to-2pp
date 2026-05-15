@@ -36,7 +36,7 @@ def test3():
         iv,
         cache_filename="Test3CompileHistory.pkl",
         filename="Test3Out.txt",
-        sim=["PP_DIAG"],
+        sim=["PP"],
         simtime=2
     )
 
@@ -109,6 +109,6 @@ def test4v2():
 if __name__ == "__main__":
     import multiprocessing as mp
     mp.freeze_support()       
-    test()
+    test3()
     #test4v2()
 #test3()
