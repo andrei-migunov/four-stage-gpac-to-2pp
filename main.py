@@ -14,7 +14,6 @@ import os
 import ast
 import numpy as np
 from collections import defaultdict
-from test_garrett import check_stage3_good_for_paper
 
 # try:
 #     from ppsim import *
