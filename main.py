@@ -243,89 +243,6 @@ def fetch_cached(filename):
         raise Exception(f"Tried to deserialize an object that probably had not been cached in a previous execution, or simply {filename} does not exist locally.")
 
 
-def _stage3_parse_idx(raw_symbol):
-    """
-    Local helper for creating Stage 3 initial values.
-    Parses symbols like x_1, x_0, v_[0,1,0], etc.
-    """
-    raw_symbol = str(raw_symbol)
-
-    if "_" in raw_symbol:
-        numeric_part = raw_symbol.split("_", 1)[1]
-        return ast.literal_eval(numeric_part)
-
-    if "[" in raw_symbol:
-        numeric_part = raw_symbol.split("[", 1)[1]
-        numeric_part = "[" + numeric_part
-        return ast.literal_eval(numeric_part)
-
-    numeric_part = ''.join(ch for ch in raw_symbol if ch.isdigit())
-    return ast.literal_eval(numeric_part)
-
-
-def _stage3_make_z_symbol(var1, var2, var_order=None):
-    """
-    Creates the same kind of z-symbol used by the Stage 3 half product.
-
-    Examples:
-        x_1, x_2 -> z_[1,2]
-        x_1, v_[0,1,0] -> z_[1,0,1,0]
-    """
-
-    if var_order is not None:
-        order = {v: i for i, v in enumerate(var_order)}
-        if order[var2] < order[var1]:
-            var1, var2 = var2, var1
-
-    i = _stage3_parse_idx(var1)
-    j = _stage3_parse_idx(var2)
-
-    if (isinstance(i, list) and isinstance(j, int)) or \
-       (isinstance(i, int) and isinstance(j, list)):
-
-        if isinstance(i, list):
-            i_and_j = i + [j]
-        else:
-            i_and_j = [i] + j
-
-        return Symbol(f"z_{i_and_j}")
-
-    return Symbol(f"z_[{i},{j}]")
-
-
-def make_stage_three_iv(old_sys, old_iv):
-    """
-    Builds the initial values for the Stage 3 half-product system.
-
-    Convention:
-        z_[i,i] = x_i^2
-        z_[i,j] = 2*x_i*x_j for i != j
-    """
-
-    new_iv = {}
-    var_order = list(old_sys.keys())
-
-    for m, var1 in enumerate(var_order):
-        for n, var2 in enumerate(var_order):
-            if m <= n:
-                z_var = _stage3_make_z_symbol(var1, var2, var_order)
-
-                if var1 == var2:
-                    new_iv[z_var] = old_iv[var1] ** 2
-                else:
-                    new_iv[z_var] = 2 * old_iv[var1] * old_iv[var2]
-
-    return new_iv
-
-
-def make_stage_three_square_mainvar(old_mainvar, old_sys):
-    """
-    If old tracked variable is x_1, this returns z_[1,1].
-    """
-    var_order = list(old_sys.keys())
-    return _stage3_make_z_symbol(old_mainvar, old_mainvar, var_order)
-
-
 ''' The main function.
 
 system: a general-purpose analog computer represented as a PIVP represented as a dictionary mapping variable names to those variables' ODEs' expressions.
@@ -415,7 +332,6 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename="cacheTest.
     
 
     ch.pp_impl_system = stage_three(ch.bdsys)
-
     ch.pp_impl_IV = make_stage_three_iv(ch.bdsys, ch.bdsysIV)
     ch.pp_impl_mainvar = make_stage_three_square_mainvar(ch.bdsys_mainvar, ch.bdsys)
 

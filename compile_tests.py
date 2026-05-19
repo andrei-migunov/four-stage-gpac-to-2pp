@@ -36,8 +36,8 @@ def test3():
         iv,
         cache_filename="Test3CompileHistory.pkl",
         filename="Test3Out.txt",
-        sim=["PP"],
-        simtime=2
+        sim=["GPAC","CRN","SCALED","TPP","PP"],
+        simtime=15
     )
 
 '''Compiles a system that computes (var a) Euler's Gamma via variable gam.'''
