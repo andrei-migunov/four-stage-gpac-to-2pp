@@ -3,11 +3,17 @@ from decompose_CRN import *
 from St0_Fns import *
 from St1_Fns import *
 from St2_Fns import *
-import pickle # serialization
+from St3_Fns import *
+import pickle
+
+
 from Tools.plotting_etc import *
 from sympy import *
 import sys
 import os
+import ast
+import numpy as np
+from collections import defaultdict
 
 # try:
 #     from ppsim import *
@@ -124,6 +130,9 @@ class CompileHistory:
         self.bdsys = None
         self.bdsysIV = None
         self.bdsys_mainvar = None
+        self.pp_impl_system = None
+        self.pp_impl_IV = None
+        self.pp_impl_mainvar = None
 
 
 
@@ -234,6 +243,89 @@ def fetch_cached(filename):
         raise Exception(f"Tried to deserialize an object that probably had not been cached in a previous execution, or simply {filename} does not exist locally.")
 
 
+def _stage3_parse_idx(raw_symbol):
+    """
+    Local helper for creating Stage 3 initial values.
+    Parses symbols like x_1, x_0, v_[0,1,0], etc.
+    """
+    raw_symbol = str(raw_symbol)
+
+    if "_" in raw_symbol:
+        numeric_part = raw_symbol.split("_", 1)[1]
+        return ast.literal_eval(numeric_part)
+
+    if "[" in raw_symbol:
+        numeric_part = raw_symbol.split("[", 1)[1]
+        numeric_part = "[" + numeric_part
+        return ast.literal_eval(numeric_part)
+
+    numeric_part = ''.join(ch for ch in raw_symbol if ch.isdigit())
+    return ast.literal_eval(numeric_part)
+
+
+def _stage3_make_z_symbol(var1, var2, var_order=None):
+    """
+    Creates the same kind of z-symbol used by the Stage 3 half product.
+
+    Examples:
+        x_1, x_2 -> z_[1,2]
+        x_1, v_[0,1,0] -> z_[1,0,1,0]
+    """
+
+    if var_order is not None:
+        order = {v: i for i, v in enumerate(var_order)}
+        if order[var2] < order[var1]:
+            var1, var2 = var2, var1
+
+    i = _stage3_parse_idx(var1)
+    j = _stage3_parse_idx(var2)
+
+    if (isinstance(i, list) and isinstance(j, int)) or \
+       (isinstance(i, int) and isinstance(j, list)):
+
+        if isinstance(i, list):
+            i_and_j = i + [j]
+        else:
+            i_and_j = [i] + j
+
+        return Symbol(f"z_{i_and_j}")
+
+    return Symbol(f"z_[{i},{j}]")
+
+
+def make_stage_three_iv(old_sys, old_iv):
+    """
+    Builds the initial values for the Stage 3 half-product system.
+
+    Convention:
+        z_[i,i] = x_i^2
+        z_[i,j] = 2*x_i*x_j for i != j
+    """
+
+    new_iv = {}
+    var_order = list(old_sys.keys())
+
+    for m, var1 in enumerate(var_order):
+        for n, var2 in enumerate(var_order):
+            if m <= n:
+                z_var = _stage3_make_z_symbol(var1, var2, var_order)
+
+                if var1 == var2:
+                    new_iv[z_var] = old_iv[var1] ** 2
+                else:
+                    new_iv[z_var] = 2 * old_iv[var1] * old_iv[var2]
+
+    return new_iv
+
+
+def make_stage_three_square_mainvar(old_mainvar, old_sys):
+    """
+    If old tracked variable is x_1, this returns z_[1,1].
+    """
+    var_order = list(old_sys.keys())
+    return _stage3_make_z_symbol(old_mainvar, old_mainvar, var_order)
+
+
 ''' The main function.
 
 system: a general-purpose analog computer represented as a PIVP represented as a dictionary mapping variable names to those variables' ODEs' expressions.
@@ -249,7 +341,7 @@ flags:
     cache_filename    - If provided, caches the CompileHistory object to this file (should end with .pkl).
     filename          - If provided, writes a human-readable summary of the compilation process to this file (should end with .txt).  "SCALED",
 '''
-def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filename=None, checks = False, verbose = False, sim = ["TPP"], user_limit_sum = None, simtime = 20):
+def compile(system, mainvar, iv, pre_process = False, cache_filename="cacheTest.pk1", filename="cacheHuman.txt", checks = False, verbose = False, sim = ["TPP", "PP"], user_limit_sum = None, simtime = 20):
     #INITIAL SYSTEM 
     ch = CompileHistory()
     ch.input_iv = iv
@@ -307,6 +399,8 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
     max_est = get_limit_sum_est(ch.deg_2_non_homo_sys,ch.deg_2_non_homo_iv, interval = [0,10])
     # max_est = (num_deg2_vars/num_crn_vars)*user_limit_sum if user_limit_sum else 2*(num_deg2_vars/num_crn_vars)*max_est
     max_est = user_limit_sum if user_limit_sum else max_est
+
+    print("Stage 2 started")
     lam = get_lam_from_max(max_est)
     # ch.tpp_impl_iv[x0] = limit_sum_est
     ch.scaled_system = scale_sys(ch.deg_2_non_homo_sys, lam)
@@ -315,6 +409,16 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
     # Perform balancing dilation and convert initial values
     ch.bdsys = balancing_dilation(ch.scaled_system)
     ch.bdsysIV = convert_to_BD_IV(ch.bdsys,ch.scaled_IV,ch.deg_2_mainvar)
+    ch.bdsys_mainvar = Symbol('x_1')
+    #At this point the system is TPP-implmentable
+    #Need to start implmeting 3rd statge
+    
+
+    ch.pp_impl_system = stage_three(ch.bdsys)
+
+    ch.pp_impl_IV = make_stage_three_iv(ch.bdsys, ch.bdsysIV)
+    ch.pp_impl_mainvar = make_stage_three_square_mainvar(ch.bdsys_mainvar, ch.bdsys)
+
 
 
 
@@ -333,11 +437,14 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
         print("Running requested simulations. This can take a long time. ...")
         run_simulations(ch, sim, simtime, DEBUG, verbose)
     print (f'Complete. Returning an object containing the full conversion history.')
-    return ch
+    return ch 
+
 
 '''Simulate the intermediate systems as requested by user input.'''
 def run_simulations(ch, sim,simtime,debug,verbose):
     
+    tpp_lim = None
+
     if "GPAC" in sim:
         if debug or verbose:
             print("Simulating (cleaned variable names) input system...")
@@ -374,11 +481,35 @@ def run_simulations(ch, sim,simtime,debug,verbose):
         if debug or verbose:
             print("Simulating TPP-implementable system (qua deterministic system)...")
         # ch.bdsysIV[x0] = 2
-        __dict__, lim = fsp(ch.bdsys,list(ch.bdsysIV.values()),time_span=(0,simtime*5),num_points = 250)
+
+        __dict__, tpp_lim = fsp(
+            ch.bdsys,
+            list(ch.bdsysIV.values()),
+            mainvar=ch.bdsys_mainvar,
+            time_span=(0,simtime*5),
+            num_points = 250
+        )
+
+        if tpp_lim and (debug or verbose):
+            print(f'(TPP-implementable) Limiting simulation value of main variable is {tpp_lim}.')
+
+    if "PP" in sim:
+        if debug or verbose:
+            print("Simulating PP-implementable system")
+        # ch.bdsysIV[x0] = 2
+        #pp, ppiv = ch.pp_impl_system,Symbol('x_1'), ch.bdsysIV.values() #clean_names(ch.pp_impl_system,Symbol('x_1'), ch.bdsysIV.values())
+        __dict__, lim = fsp(
+            ch.pp_impl_system,
+            list(ch.pp_impl_IV.values()),
+            mainvar=ch.pp_impl_mainvar,
+            time_span=(0,simtime*5),
+            num_points = 250
+        )
+
         if lim and (debug or verbose):
-            print(f'(TPP-implementable) Limiting simulation value of main variable is {lim}.')
-
-
+            print(f'(PP-implementable) Limiting simulation value of main variable is {lim}.')
+            original_final_value = np.sqrt(max(float(lim), 0.0))
+            print(f'Original final value (sqrt of {ch.pp_impl_mainvar}): {original_final_value}')
  
 """
 Reads a .txt file describing a system, initial values, and optional flags,

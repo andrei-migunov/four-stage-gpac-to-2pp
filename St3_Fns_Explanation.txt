@@ -1,0 +1,207 @@
+Stage 3: Transfer-Lift Self-Product Procedure
+
+----------------------------------------------------------------
+
+High Level Idea
+
+Stage 3 now uses a transfer-lift method. It first has the cubic TPP system as a collection of conservative transfers between old variables. 
+Then each old-variable transfer is lifted directly into the new z-variable system.
+
+----------------------------------------------------------------------------------------------
+Main Procedure
+
+1. Clean variable names if requested.
+
+2. Enter the self-product path.
+
+    In the normal one-system case, stage_three calls:
+
+        self_product(clean_sys)
+
+    and self_product calls:
+
+        stage_three_transfer_lift(clean_sys)
+
+    This is the main Stage 3 path used by the full compiler.
+
+3. Collect cubic monomials.
+
+    The function:
+        _stage3_collect_cubic_monomial_coeffs(sys)
+
+    loops through every equation and every additive term in the system.
+
+    For each term, it separates:
+        coefficient
+        old variable factors
+
+    example:
+        -3*x_0*x_1**2
+    becomes:
+        coefficient = -3
+        old_factors = (x_0, x_1, x_1)
+
+    The result is a dictionary of the form:
+
+        monomial_coeffs[monomial][var] = coefficient
+    example:
+        monomial_coeffs[(x_0, x_1, x_1)][x_0] = -3
+        monomial_coeffs[(x_0, x_1, x_1)][x_2] =  3
+
+4. Ignore tiny numerical zero coefficients.
+
+    The helper functio:
+        _stage3_zeroish(expr)
+    treats coefficients very close to zero as zero. It is only used so that tiny floating-point leftovers do not interfere with the transfer construction
+
+    For example, coefficients around 1e-13 may appear after earlier symbolic simplification or expansion. These are treated as zero for the purpose of deciding which transfers actually exist
+
+5. Create all z variables.
+
+    The function:
+        _stage3_initialize_z_system(var_order)
+
+    creates one z-variable for every upper-triangular pair of old variables.
+
+    If the old variables are:
+        x_0, x_1, x_2
+
+    then the Stage 3 variables are:
+        z_[0,0]
+        z_[0,1]
+        z_[0,2]
+        z_[1,1]
+        z_[1,2]
+        z_[2,2]
+
+    The half-product convention is:
+        z_[i,i] = x_i^2
+        z_[i,j] = 2*x_i*x_j for i != j
+
+    Every new z-variable starts with derivative zero:
+        z_system[z] = 0
+
+    The transfer-lift process then adds terms into these derivatives.
+
+6. Decompose each cubic monomial into old-variable transfers.
+
+    For each cubic monomial M, The code looks at its coefficient vector across all old equations.
+
+    For example, if the monomial M has coefficients:
+
+        x_0' gets -5*M
+        x_1' gets +2*M
+        x_2' gets +3*M
+
+    Since the negative mass equals the positive mass, this can be decomposed into transfers:
+
+        x_0 -> x_1 at rate 2*M
+        x_0 -> x_2 at rate 3*M
+
+    This is done by:
+        _stage3_decompose_monomial_coeffs_into_transfers(
+            monomial,
+            coeffs,
+            var_order
+        )
+
+    Each transfer has the form:
+        (source_var, target_var, amount)
+
+    This means:
+        source_var loses amount * monomial
+        target_var gains amount * monomial
+
+    For example:
+        (x_0, x_2, 3)
+
+    represents:
+        x_0' -= 3*M
+        x_2' += 3*M
+
+7. Require negative terms to contain the consumed variable.
+
+    The transfer decomposition checks this before creating a transfer.
+
+8. Lift each old transfer into the z-system.
+
+    The main lifting is done by:
+        _stage3_add_lifted_transfer(
+            z_system,
+            var_order,
+            monomial,
+            source,
+            target,
+            amount
+        )
+
+    if the old transfer is:
+        source -> target at rate amount * M
+
+    where:
+        M = source * r * s
+
+    Since the source variable must appear in M, Stage 3 removes one copy of the source variable from the monomial. The remaining two factors are:
+        r, s
+
+    These two factors form the context z-variable:
+        context_z = z_[r,s]
+
+    Then Stage 3 loops over every possible partner variable p.
+
+    For each partner p, it updates:
+        z_[source,p]' -= interaction
+        z_[target,p]' += interaction
+
+9. Account for the half-product scaling.
+
+    Because Stage 3 uses:
+        z_[i,i] = x_i^2
+        z_[i,j] = 2*x_i*x_j for i != j
+
+    the coefficient used in the lifted interaction depends on whether each pair is diagonal or off-diagonal.
+
+    The helper:
+        _stage3_pair_scale(var1, var2)
+
+    returns:
+        1 if var1 == var2
+        2 if var1 != var2
+
+    For each lifted transfer, Stage 3 computes:
+        lifted_coeff = 2 * amount / (source_scale * context_scale)
+
+    where:
+        source_scale  = scale of z_[source, partner]
+        context_scale = scale of z_[r, s]
+
+    Then the quadratic interaction term is:
+
+        interaction = lifted_coeff * source_z * context_z
+
+10. Add the interaction.
+
+    For each lifted interaction:
+        z_system[source_z] -= interaction
+        z_system[target_z] += interaction
+
+    The exact same term is subtracted from one z-equation and added to another z-equation.
+
+    Therefore, the transfer-lift construction is conservative.
+
+11. Return the final PP-implementable quadratic system.
+
+    After every cubic monomial has been decomposed into transfers, and every transfer has been lifted into the z-system, Stage 3 returns:
+        z_system
+
+    This is the final PP-implementable quadratic ODE system.
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Main two important function
+
+stage_three(...)
+    Stage 3 runner. Handles optional name cleaning and decides which product path to use.
+
+stage_three_quick(sys)
+    Short runner for the normal compiler path. Assumes no second system and no special name cleaning.

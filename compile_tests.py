@@ -9,7 +9,15 @@ def test():
               "d":"c-c*d"})
     
     iv = sympify({"a":3,"b":2,"c":3,"d":1})
-    ch = compile(input,Symbol("a"),iv, cache_filename = "Test1CompileHistory.pkl", filename="Test1Out.txt", pre_process = True) # Input system, Primary variable, Input IV
+    ch = compile(
+        input,
+        Symbol("d"),
+        iv,
+        cache_filename="Test3CompileHistory.pkl",
+        filename="Test3Out.txt",
+        sim=["PP_DIAG"],
+        simtime=2
+    )
 
 def test2():
     return compile_from_file("test_compile_in.txt")
@@ -22,7 +30,15 @@ def test3():
             "d":"1-c*d"})
     
     iv = sympify({"a":0,"b":0,"c":0,"d":0})
-    ch = compile(input,Symbol("d"),iv, cache_filename = "Test3CompileHistory.pkl", filename="Test3Out.txt") # Input system, Primary variable, Input IV
+    ch = compile(
+        input,
+        Symbol("d"),
+        iv,
+        cache_filename="Test3CompileHistory.pkl",
+        filename="Test3Out.txt",
+        sim=["PP"],
+        simtime=2
+    )
 
 '''Compiles a system that computes (var a) Euler's Gamma via variable gam.'''
 def test4():
