@@ -130,6 +130,9 @@ class CompileHistory:
         self.bdsys = None
         self.bdsysIV = None
         self.bdsys_mainvar = None
+        self.bdsys_cleaned = None
+        self.bdsys_IV_cleaned = None
+        self.bdsys_mainvar_cleaned = None
         self.pp_impl_system = None
         self.pp_impl_IV = None
         self.pp_impl_mainvar = None
@@ -330,10 +333,13 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename="cacheTest.
     #At this point the system is TPP-implmentable
     #Need to start implmeting 3rd statge
     
+    #Clean the balancig-dilated system so that the pp-implementable system doesn't look ridiculous
+    ch.bdsys_cleaned, ch.bdsys_IV_cleaned = clean_names(ch.bdsys, ch.bdsys_mainvar, ch.bdsysIV)
+    ch.bdsys_mainvar_cleaned = Symbol('x_1')
 
-    ch.pp_impl_system = stage_three(ch.bdsys)
-    ch.pp_impl_IV = make_stage_three_iv(ch.bdsys, ch.bdsysIV)
-    ch.pp_impl_mainvar = make_stage_three_square_mainvar(ch.bdsys_mainvar, ch.bdsys)
+    ch.pp_impl_system = stage_three(ch.bdsys_cleaned)
+    ch.pp_impl_IV = make_stage_three_iv(ch.bdsys_cleaned, ch.bdsys_IV_cleaned)
+    ch.pp_impl_mainvar = make_stage_three_square_mainvar(ch.bdsys_mainvar_cleaned, ch.bdsys_cleaned)
 
 
 
