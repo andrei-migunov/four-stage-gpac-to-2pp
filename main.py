@@ -55,7 +55,10 @@ def pp_reactions_to_odes(reactions):
     for k in dvars:
         dvars[k] = expand(dvars[k])
 
-    return dict(dvars)
+    def z_to_pow(vvar):
+        return [int(x) for x in str(vvar)[2:].strip('][').split(',')]
+    
+    return dict(sorted(dvars.items(), key = lambda item: z_to_pow(item[0])))
 
 def to_ppsim_format(reactions, normalize=False):
     """
@@ -260,90 +263,96 @@ flags:
     cache_filename    - If provided, caches the CompileHistory object to this file (should end with .pkl).
     filename          - If provided, writes a human-readable summary of the compilation process to this file (should end with .txt).  "SCALED",
 '''
-def compile(system, mainvar, iv, pre_process = False, cache_filename="cacheTest.pk1", filename="cacheHuman.txt", checks = False, verbose = False, sim = ["TPP", "PP"], user_limit_sum = None, simtime = 20):
+def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filename="cacheHuman.txt", checks = False, verbose = False, sim = ["TPP", "PP"], user_limit_sum = None, simtime = 20):
     #INITIAL SYSTEM 
     ch = CompileHistory()
-    ch.input_iv = iv
-    ch.input_mainvar = mainvar
-    ch.input_system = {k: expand(v) for k, v in system.items()}
+    if not cache_filename:
+        ch.input_iv = iv
+        ch.input_mainvar = mainvar
+        ch.input_system = {k: expand(v) for k, v in system.items()}
 
-    # First verify that system is actually a GPAC
-    if not is_valid_gpac_system(system):
-        raise TypeError(f'Input system is not a GPAC.')
+        # First verify that system is actually a GPAC
+        if not is_valid_gpac_system(system):
+            raise TypeError(f'Input system is not a GPAC.')
 
-    ch.cleaned_input_system, ch.cleaned_input_iv = clean_names(system, mainvar, iv)
-    ch.cleaned_input_mainvar = Symbol('x_1')
-    # Expand all sympy expressions in the system dictionary
-    ch.cleaned_input_system = {k: expand(v) for k, v in ch.cleaned_input_system.items()}
+        ch.cleaned_input_system, ch.cleaned_input_iv = clean_names(system, mainvar, iv)
+        ch.cleaned_input_mainvar = Symbol('x_1')
+        # Expand all sympy expressions in the system dictionary
+        ch.cleaned_input_system = {k: expand(v) for k, v in ch.cleaned_input_system.items()}
 
-    if pre_process:
-        print("Converting to system with all-0 initial values...")
-        ch.input_zeroed_system, ch.input_zeroed_iv, ch.input_zeroed_mainvar = pre_processing(ch.cleaned_input_system, ch.cleaned_input_iv, ch.cleaned_input_mainvar)
+        if pre_process:
+            print("Converting to system with all-0 initial values...")
+            ch.input_zeroed_system, ch.input_zeroed_iv, ch.input_zeroed_mainvar = pre_processing(ch.cleaned_input_system, ch.cleaned_input_iv, ch.cleaned_input_mainvar)
 
-    # if DEBUG and pre_process:
-    #     zeroedivs = list(ch.input_zeroed_iv.values())
-    #     fsp(ch.input_zeroed_system,zeroedivs,mainvar=ch.input_zeroed_mainvar,time_span=(0,simtime),num_points = 250)
+        # if DEBUG and pre_process:
+        #     zeroedivs = list(ch.input_zeroed_iv.values())
+        #     fsp(ch.input_zeroed_system,zeroedivs,mainvar=ch.input_zeroed_mainvar,time_span=(0,simtime),num_points = 250)
 
-    #CHEMICAL REACTION NETWORK OF ARBITRARY DEGREE
-    print("Converting to CRN...")
-    crn, crn_iv, leader = smart_dual_rail_optimized(ch.cleaned_input_system, ch.cleaned_input_iv, ch.cleaned_input_mainvar) if not pre_process else smart_dual_rail_optimized(ch.input_zeroed_system, ch.input_zeroed_iv, ch.input_zeroed_mainvar)
-    ch.crn = crn # Store the uncleaned CRN so that it's clear what was dual-railed, in case a user wants to know that.
-    ch.crn_iv = crn_iv
-    ch.crn_mainvar = leader
-    ch.peaks = peaks(crn,list(crn.keys()))
+        #CHEMICAL REACTION NETWORK OF ARBITRARY DEGREE
+        print("Converting to CRN...")
+        crn, crn_iv, leader = smart_dual_rail_optimized(ch.cleaned_input_system, ch.cleaned_input_iv, ch.cleaned_input_mainvar) if not pre_process else smart_dual_rail_optimized(ch.input_zeroed_system, ch.input_zeroed_iv, ch.input_zeroed_mainvar)
+        ch.crn = crn # Store the uncleaned CRN so that it's clear what was dual-railed, in case a user wants to know that.
+        ch.crn_iv = crn_iv
+        ch.crn_mainvar = leader
+        ch.peaks = peaks(crn,list(crn.keys()))
 
-    if checks:
-        if not crn_implementable(crn): raise ValueError('Internal issue: CRN form system is not CRN implementable (conversion failed)')
+        if checks:
+            if not crn_implementable(crn): raise ValueError('Internal issue: CRN form system is not CRN implementable (conversion failed)')
 
-    if verbose:
-        print(f'CRN translation complete, dual railed system below:')
-        print(format_dict(crn))
-        print(f'Converting CRN to non-homogeneously degree 2 form via Carothers (2005) method...')
+        if verbose:
+            print(f'CRN translation complete, dual railed system below:')
+            print(format_dict(crn))
+            print(f'Converting CRN to non-homogeneously degree 2 form via Carothers (2005) method...')
 
-    crn, crn_iv = clean_names(crn,leader, crn_iv)
+        crn, crn_iv = clean_names(crn,leader, crn_iv)
 
 
-    ch.deg_2_non_homo_sys  = carothers_observation1_ode_system_v2(crn,list(crn.keys()))
-    ch.deg_2_non_homo_iv = convert_to_deg2_IV(crn, ch.deg_2_non_homo_sys, crn_iv)
-    ch.deg_2_mainvar = ch.crn_mainvar
+        ch.deg_2_non_homo_sys  = carothers_observation1_ode_system_v2(crn,list(crn.keys()))
+        ch.deg_2_non_homo_iv = convert_to_deg2_IV(crn, ch.deg_2_non_homo_sys, crn_iv)
+        ch.deg_2_mainvar = ch.crn_mainvar
 
-    # # If user provided an estimate of the limiting sum of the input system values then the limiting sum of the CRN is estimated at 3 times that.
-    # # If not, simulate the CRN system for a brief period and take the sum of maximum observed values over the species.
-    # # The simulated result is of course more likely to be close - but if the user really has a good guess, they can save some compile time this way.
-    # #limit_sum_est is a user's belief about the limit of the input GPAC system.
-    # #we scale it by 2 (dual-rail) and by the growth from the crn system to the tpp system
-    # #if the user doesn't have a guess, we simulate the crn to estimate equilibrium, 
-    num_crn_vars = len(ch.crn)
-    num_deg2_vars = len(ch.deg_2_non_homo_sys)
-    max_est = get_limit_sum_est(ch.deg_2_non_homo_sys,ch.deg_2_non_homo_iv, interval = [0,10])
-    # max_est = (num_deg2_vars/num_crn_vars)*user_limit_sum if user_limit_sum else 2*(num_deg2_vars/num_crn_vars)*max_est
-    max_est = user_limit_sum if user_limit_sum else max_est
+        # # If user provided an estimate of the limiting sum of the input system values then the limiting sum of the CRN is estimated at 3 times that.
+        # # If not, simulate the CRN system for a brief period and take the sum of maximum observed values over the species.
+        # # The simulated result is of course more likely to be close - but if the user really has a good guess, they can save some compile time this way.
+        # #limit_sum_est is a user's belief about the limit of the input GPAC system.
+        # #we scale it by 2 (dual-rail) and by the growth from the crn system to the tpp system
+        # #if the user doesn't have a guess, we simulate the crn to estimate equilibrium, 
+        num_crn_vars = len(ch.crn)
+        num_deg2_vars = len(ch.deg_2_non_homo_sys)
+        max_est = get_limit_sum_est(ch.deg_2_non_homo_sys,ch.deg_2_non_homo_iv, interval = [0,10])
+        # max_est = (num_deg2_vars/num_crn_vars)*user_limit_sum if user_limit_sum else 2*(num_deg2_vars/num_crn_vars)*max_est
+        max_est = user_limit_sum if user_limit_sum else max_est
 
-    print("Stage 2 started")
-    lam = get_lam_from_max(max_est)
-    # ch.tpp_impl_iv[x0] = limit_sum_est
-    ch.scaled_system = scale_sys(ch.deg_2_non_homo_sys, lam)
-    ch.scaled_IV = scale_IV(ch.deg_2_non_homo_iv, lam, Symbol('x_1'))
+        print("Stage 2 started")
+        lam = get_lam_from_max(max_est)
+        # ch.tpp_impl_iv[x0] = limit_sum_est
+        ch.scaled_system = scale_sys(ch.deg_2_non_homo_sys, lam)
+        ch.scaled_IV = scale_IV(ch.deg_2_non_homo_iv, lam, Symbol('x_1'))
 
-    # Perform balancing dilation and convert initial values
-    ch.bdsys = balancing_dilation(ch.scaled_system)
-    ch.bdsysIV = convert_to_BD_IV(ch.bdsys,ch.scaled_IV,ch.deg_2_mainvar)
-    ch.bdsys_mainvar = Symbol('x_1')
-    #At this point the system is TPP-implmentable
-    #Need to start implmeting 3rd statge
-    
-    #Clean the balancig-dilated system so that the pp-implementable system doesn't look ridiculous
-    ch.bdsys_cleaned, ch.bdsys_IV_cleaned = clean_names(ch.bdsys, ch.bdsys_mainvar, ch.bdsysIV)
-    ch.bdsys_mainvar_cleaned = Symbol('x_1')
+        # Perform balancing dilation and convert initial values
+        ch.bdsys = balancing_dilation(ch.scaled_system)
+        ch.bdsysIV = convert_to_BD_IV(ch.bdsys,ch.scaled_IV,ch.deg_2_mainvar)
+        ch.bdsys_mainvar = Symbol('x_1')
+        #At this point the system is TPP-implmentable
+        #Need to start implmeting 3rd statge
+        
+        #Clean the balancig-dilated system so that the pp-implementable system doesn't look ridiculous
+        ch.bdsys_cleaned, ch.bdsys_IV_cleaned = clean_names(ch.bdsys, ch.bdsys_mainvar, ch.bdsysIV)
+        ch.bdsys_mainvar_cleaned = Symbol('x_1')
 
-    ch.pp_impl_system = stage_three(ch.bdsys_cleaned)
-    ch.pp_impl_IV = make_stage_three_iv(ch.bdsys_cleaned, ch.bdsys_IV_cleaned)
-    ch.pp_impl_mainvar = make_stage_three_square_mainvar(ch.bdsys_mainvar_cleaned, ch.bdsys_cleaned)
+        ch.pp_impl_system = stage_three(ch.bdsys_cleaned)
+        ch.pp_impl_IV = make_stage_three_iv(ch.bdsys_cleaned, ch.bdsys_IV_cleaned)
+        ch.pp_impl_mainvar = make_stage_three_square_mainvar(ch.bdsys_mainvar_cleaned, ch.bdsys_cleaned)
+
+
+        ch.pp_reactions = buildPP(ch.pp_impl_system, ch.pp_impl_mainvar)
+    else:
+        ch = fetch_cached(cache_filename)
+    # cache_obj(ch, "pp_to_ode_test_pickle.pkl")
 
     ch.pp_reactions = buildPP(ch.pp_impl_system, ch.pp_impl_mainvar)
-
     if DEBUG:
-        odes_from_pp = sorted(pp_reactions_to_odes(ch.pp_reactions))
+        odes_from_pp = pp_reactions_to_odes(ch.pp_reactions)
         iv = list(ch.pp_impl_IV.values()) # Intial values should be the same, regardless
         _, lim = fsp(odes_from_pp,iv,mainvar=ch.cleaned_input_mainvar,time_span=(0,simtime),num_points = 250)
         if lim:

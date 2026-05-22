@@ -34,7 +34,7 @@ def test3():
         input,
         Symbol("d"),
         iv,
-        cache_filename="Test3CompileHistory.pkl",
+        cache_filename="pp_to_ode_test_pickle.pkl",
         filename="Test3Out.txt",
         sim=["GPAC","CRN","SCALED","TPP","PP"],
         simtime=15
