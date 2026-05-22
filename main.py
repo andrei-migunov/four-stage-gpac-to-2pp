@@ -9,7 +9,6 @@ import pickle
 
 from Tools.plotting_etc import *
 from sympy import *
-import sys
 import os
 import ast
 import numpy as np
@@ -26,7 +25,7 @@ DEBUG = True
 
 
 '''Reverse direction - use this to test that final ODE-> PP transformation was correct.'''
-def tpp_reactions_to_odes(reactions):
+def pp_reactions_to_odes(reactions):
     """
     Convert a list of TPP reactions into a system of ODEs.
     Each reaction is of the form (rate, [A, B, C], [X, Y, Z]).
@@ -41,7 +40,7 @@ def tpp_reactions_to_odes(reactions):
         prod_syms = [Symbol(s) for s in products]
         all_syms = list(set(react_syms + prod_syms))
         
-        # Create monomial term = rate * A * B * C
+        # Create monomial term = rate * A * B 
         monomial = rate
         for r in react_syms:
             monomial *= r
@@ -61,7 +60,7 @@ def tpp_reactions_to_odes(reactions):
 def to_ppsim_format(reactions, normalize=False):
     """
     Convert reactions of the form (rate constant, lhs, rhs) into a dictionary:
-        { (A,B,C): { (X,Y,Z): rate, ... }, ... }
+        { (A,B): { (X,Y): rate, ... }, ... }
 
     If normalize=True, the rate constants are converted into probabilities.
     """
@@ -89,11 +88,11 @@ def to_ppsim_format(reactions, normalize=False):
     }
 
 """Pretty-print the reactions in self.TPP in chemical reaction format."""
-def to_TPP_reactions_str(TPP):
-    if TPP is None:
+def to_PP_reactions_str(PP):
+    if PP is None:
         return "No reactions to display."
     lines = []
-    for rate, lhs, rhs in TPP:
+    for rate, lhs, rhs in PP:
         lhs_str = " + ".join(lhs)
         rhs_str = " + ".join(rhs)
         lines.append(f"{lhs_str} ---> {rhs_str} (rate constant: {rate})")
@@ -136,7 +135,7 @@ class CompileHistory:
         self.pp_impl_system = None
         self.pp_impl_IV = None
         self.pp_impl_mainvar = None
-        self.pp_reactions
+        self.pp_reactions = None
 
 
         # self.uncleaned_tpp = None
@@ -164,7 +163,7 @@ class CompileHistory:
             print(format_dict(self.tpp_impl))
 
         if self.TPP and self.ppsim_format:
-            print(f'Final population protocol {to_TPP_reactions_str(self.TPP)}: \n')
+            print(f'Final population protocol {to_PP_reactions_str(self.TPP)}: \n')
             print(format_dict(self.ppsim_format))
             
     def write(self, filename):
@@ -183,11 +182,11 @@ class CompileHistory:
                 f.write("\n")
             
             # Finally write the reaction form for readability
-            f.write(f'TPP in reaction format: \n' + to_TPP_reactions_str(self.TPP) +"\n")
+            f.write(f'TPP in reaction format: \n' + to_PP_reactions_str(self.TPP) +"\n")
     
     def verify(self):
         #Verify that the intermediate and final systems are consistent with the input
-        backwards =  tpp_reactions_to_odes(self.TPP)
+        backwards =  pp_reactions_to_odes(self.TPP)
         lower_upper_map = uppercase_variable_mapping(self.tpp_impl.keys())
         for var, expr in self.tpp_impl.items():
             sexpr = expand(sympify(expr)).subs(lower_upper_map)
@@ -343,6 +342,12 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename="cacheTest.
 
     ch.pp_reactions = buildPP(ch.pp_impl_system, ch.pp_impl_mainvar)
 
+    if DEBUG:
+        odes_from_pp = sorted(pp_reactions_to_odes(ch.pp_reactions))
+        iv = list(ch.pp_impl_IV.values()) # Intial values should be the same, regardless
+        _, lim = fsp(odes_from_pp,iv,mainvar=ch.cleaned_input_mainvar,time_span=(0,simtime),num_points = 250)
+        if lim:
+            print(f'(Input) Limiting simulation value of main variable is {lim}.')
 
 
 
