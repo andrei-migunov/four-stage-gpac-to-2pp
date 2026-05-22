@@ -136,7 +136,7 @@ class CompileHistory:
         self.pp_impl_system = None
         self.pp_impl_IV = None
         self.pp_impl_mainvar = None
-
+        self.pp_reactions
 
 
         # self.uncleaned_tpp = None
@@ -341,7 +341,7 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename="cacheTest.
     ch.pp_impl_IV = make_stage_three_iv(ch.bdsys_cleaned, ch.bdsys_IV_cleaned)
     ch.pp_impl_mainvar = make_stage_three_square_mainvar(ch.bdsys_mainvar_cleaned, ch.bdsys_cleaned)
 
-
+    ch.pp_reactions = buildPP(ch.pp_impl_system, ch.pp_impl_mainvar)
 
 
 
