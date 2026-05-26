@@ -56,7 +56,11 @@ def pp_reactions_to_odes(reactions):
         dvars[k] = expand(dvars[k])
 
     def z_to_pow(vvar):
-        return [int(x) for x in str(vvar)[2:].strip('][').split(',')]
+        try:
+            return [int(x) for x in str(vvar)[2:].strip('][').split(',')]
+        except ValueError:
+            # Plain variable name (e.g. 'x', 'y', 'z'): sort alphabetically
+            return [ord(c) for c in str(vvar)]
     
     return dict(sorted(dvars.items(), key = lambda item: z_to_pow(item[0])))
 
