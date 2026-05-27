@@ -317,6 +317,9 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
         ch.scaled_system = scale_sys(ch.deg_2_non_homo_sys, lam)
         ch.scaled_IV = scale_IV(ch.deg_2_non_homo_iv, lam, Symbol('x_1'))
 
+    #temp
+        ch.scaled_system, ch.scaled_IV = clean_names(ch.scaled_system, Symbol('x_1'), ch.scaled_IV)
+
         # Perform balancing dilation and convert initial values
         ch.bdsys = balancing_dilation(ch.scaled_system)
         ch.bdsysIV = convert_to_BD_IV(ch.bdsys,ch.scaled_IV,ch.deg_2_mainvar)
@@ -325,7 +328,7 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
         #Need to start implmeting 3rd statge
         
         #Clean the balancig-dilated system so that the pp-implementable system doesn't look ridiculous
-        ch.bdsys_cleaned, ch.bdsys_IV_cleaned = clean_names(ch.bdsys, ch.bdsys_mainvar, ch.bdsysIV)
+        ch.bdsys_cleaned, ch.bdsys_IV_cleaned = ch.bdsys, ch.bdsysIV #clean_names(ch.bdsys, ch.bdsys_mainvar, ch.bdsysIV)
         ch.bdsys_mainvar_cleaned = Symbol('x_1')
 
         ch.pp_impl_system = stage_three(ch.bdsys_cleaned)
