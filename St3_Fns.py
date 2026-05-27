@@ -1,7 +1,6 @@
 from St0_Fns import *
 from St1_Fns import *
 from sympy import *
-from sympy import Integral  # , Zero
 from sympy.utilities.lambdify import *
 import sympy as sp
 import numpy as np
@@ -899,86 +898,3 @@ def make_stage_three_square_mainvar(old_mainvar, old_sys):
     return _stage3_make_z_symbol(old_mainvar, old_mainvar, var_order)
 
 
-
-"""
-Convert a degree-2 ODE system to bimolecular reactions A + B -> C + D
-consistent with mass-action kinetics.
-
-sys     : dict mapping variable to ODE expression (SymPy)
-mainvar : variable we care about, though it has no role here yet
-Returns a list of (coeff, lhs, rhs) where coeff is a positive rate constant, lhs and rhs are lists of exactly two uppercase species-name strings.
-"""
-def buildPP(sys, mainvar):
-    def extract_terms(expr):
-        expr = sp.expand(expr)
-        return list(expr.args) if isinstance(expr, sp.Add) else [expr]
-
-    def decompose_term(term):
-        term = sp.expand(term)
-        if term.is_Number:
-            return abs(term), []
-        coeff = 1
-        factors = []
-        args = term.args if isinstance(term, sp.Mul) else [term]
-        for arg in args:
-            if arg.is_Number:
-                coeff *= arg
-            elif isinstance(arg, sp.Pow):
-                base, exp = arg.args
-                if not exp.is_Integer or exp < 1:
-                    raise ValueError(f"Non-integer or negative exponent in term: {term}")
-                factors.extend([str(base).upper()] * int(exp))
-            elif isinstance(arg, sp.Symbol):
-                factors.append(str(arg).upper())
-            else:
-                raise ValueError(f"Unexpected factor in term: {arg}")
-        return abs(coeff), factors
-
-    reactions = []
-
-    for var, expr in sys.items():
-        var_str = str(var).upper()
-        for term in extract_terms(expr):
-            coeff, factors = decompose_term(term)
-            if len(factors) != 2:
-                raise ValueError(
-                    f"Monomial '{term}' in equation for '{var}' is not degree-2 "
-                    f"(found {len(factors)} symbolic factors)."
-                )
-            A, B = factors
-            lhs = [A, B]
-
-            if term.could_extract_minus_sign():
-                if var_str not in factors:
-                    raise ValueError(
-                        f"Negative monomial '{term}' in equation for '{var}' does not "
-                        f"contain '{var_str}'."
-                    )
-                C = A if B == var_str else B
-                rhs = [C, C]
-            else:
-                if var_str in factors:
-                    C = A if B == var_str else B
-                    if C == var_str:
-                        raise ValueError(
-                            f"Positive monomial '{term}' is purely '{var_str}^2', which "
-                            f"cannot be represented as a 2-in-2-out reaction for '{var_str}'."
-                        )
-                    rhs = [var_str, var_str]
-                else:
-                    rhs = [A, var_str]
-
-            reactions.append((coeff, lhs, rhs))
-
-    # Deduplicate: A+B->C+D and B+A->D+C are the same reaction
-    seen = set()
-    unique = []
-    for coeff, lhs, rhs in reactions:
-        key = (coeff, tuple(sorted(lhs)), tuple(sorted(rhs)))
-        if key not in seen:
-            seen.add(key)
-            unique.append((coeff, lhs, rhs))
-    return unique
-
-
-    

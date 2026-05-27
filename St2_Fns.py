@@ -66,7 +66,7 @@ def get_lam(system, iv=None,interval = [0,10] ):
 '''Helper subroutine for getting lambda once an adequately stable solution has been found. 
 Input: a bound (estimate) for the system var sum'''
 def get_lam_from_max(max_sum):
-    lam =  max_sum*15
+    lam =  math.ceil(max_sum*15)
     return lam
                 
 

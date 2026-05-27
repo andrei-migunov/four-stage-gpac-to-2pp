@@ -4,7 +4,9 @@ from St0_Fns import *
 from St1_Fns import *
 from St2_Fns import *
 from St3_Fns import *
+from ODE_to_PP import *
 import pickle
+from Tools.compare_systems import compare_ode_systems
 
 
 from Tools.plotting_etc import *
@@ -21,7 +23,7 @@ from collections import defaultdict
 #     ppsim_available = False
 #     print("ppsim not installed on the version of Python you're using to run this -- ignoring sim TPP option.")
 
-DEBUG = True
+DEBUG = False
 
 
 '''Reverse direction - use this to test that final ODE-> PP transformation was correct.'''
@@ -94,12 +96,12 @@ def to_ppsim_format(reactions, normalize=False):
         for lhs, rhs_dict in rule_dict.items()
     }
 
-"""Pretty-print the reactions in self.TPP in chemical reaction format."""
-def to_PP_reactions_str(PP):
-    if PP is None:
+"""Pretty-print the reactions in self.PP in chemical reaction format."""
+def to_PP_reactions_str(reactions):
+    if not reactions:
         return "No reactions to display."
     lines = []
-    for rate, lhs, rhs in PP:
+    for rate, lhs, rhs in reactions:
         lhs_str = " + ".join(lhs)
         rhs_str = " + ".join(rhs)
         lines.append(f"{lhs_str} ---> {rhs_str} (rate constant: {rate})")
@@ -145,33 +147,25 @@ class CompileHistory:
         self.pp_reactions = None
 
 
-        # self.uncleaned_tpp = None
-        # self.uncleaned_tpp_iv = None
-        # self.tpp_impl = None
-        # self.tpp_impl_iv = None
-        # self.TPP = None
-        #self.TPP_iv = None
         self.ppsim_format = None
 
-    def print(self):
-        if self.input_system and self.input_iv:
-            print(f'Input system with initial value {self.input_iv}: \n')
-            print(format_dict(self.input_system))
+    # def print(self):
+    #     if self.input_system and self.input_iv:
+    #         print(f'Input system with initial value {self.input_iv}: \n')
+    #         print(format_dict(self.input_system))
 
-        if self.crn and self.crn_iv:
-            print(f'CRN system with initial value {self.crn_iv}: \n')
-            print(format_dict(self.crn))
+    #     if self.crn and self.crn_iv:
+    #         print(f'CRN system with initial value {self.crn_iv}: \n')
+    #         print(format_dict(self.crn))
 
-        if self.peaks:
-            print(f'CRN system peak monomials: {self.peaks} \n')
 
-        if self.tpp_impl and self.tpp_impl_iv:
-            print(f'TPP-implementable system with initial value {self.tpp_impl_iv}: \n')
-            print(format_dict(self.tpp_impl))
+    #     if self.pp_impl and self.pp_impl_iv:
+    #         print(f'TPP-implementable system with initial value {self.tpp_impl_iv}: \n')
+    #         print(format_dict(self.tpp_impl))
 
-        if self.TPP and self.ppsim_format:
-            print(f'Final population protocol {to_PP_reactions_str(self.TPP)}: \n')
-            print(format_dict(self.ppsim_format))
+    #     if self.pp_reactions and self.ppsim_format:
+    #         print(f'Final population protocol {to_PP_reactions_str(self.TPP)}: \n')
+    #         print(format_dict(self.ppsim_format))
             
     def write(self, filename):
         """
@@ -189,21 +183,8 @@ class CompileHistory:
                 f.write("\n")
             
             # Finally write the reaction form for readability
-            f.write(f'TPP in reaction format: \n' + to_PP_reactions_str(self.TPP) +"\n")
+            f.write(f'PP in reaction format: \n' + to_PP_reactions_str(self.PP_reactions) +"\n")
     
-    def verify(self):
-        #Verify that the intermediate and final systems are consistent with the input
-        backwards =  pp_reactions_to_odes(self.TPP)
-        lower_upper_map = uppercase_variable_mapping(self.tpp_impl.keys())
-        for var, expr in self.tpp_impl.items():
-            sexpr = expand(sympify(expr)).subs(lower_upper_map)
-            if not sexpr == backwards[Symbol(str(var).upper())]:
-                raise AttributeError(f'Conversion verification error: TPP qua ODE system does not match earlier TPP-implementable ODE. Please report this error! Thanks!')
-        return None
-    
-
-
-
         
 '''
 Input: A bounded general-purpose analog computer G, in the form of a Python dictionary G = {x:x',y:y',...,z:z'} mapping variable names to variable ODEs, 
@@ -261,16 +242,19 @@ compilation.
 flags:
 
     verbose           - If True, prints intermediate system outputs and additional information during compilation.
-    conversionchecks  - If True, performs form checks on intermediate systems (e.g., verifies CRN is implementable).
+    checks  - If True, performs form checks on intermediate systems (e.g., verifies CRN is implementable).
     sim               - List of simulation stages to run. Options: ["GPAC, CRN, DEG2, "SCALED", TPP, PLPP"].
     user_limit_sum         - User's estimate of the input system's limiting sum-of-values. Used to estimate fuel species x0. The more precisely one can get a sustainable amount of x0 (such that it does not crash to 0 during simulation), the better ODE solver runtime will be.
     cache_filename    - If provided, caches the CompileHistory object to this file (should end with .pkl).
     filename          - If provided, writes a human-readable summary of the compilation process to this file (should end with .txt).  "SCALED",
-'''
-def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filename="cacheHuman.txt", checks = False, verbose = False, sim = ["TPP", "PP"], user_limit_sum = None, simtime = 20):
+    load_serialized - If provided, reads a pickled CompileHistory object. Must end in .pkl.
+    '''
+def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filename="text_out.txt", load_serialized = None, checks = False, verbose = False, sim = ["TPP", "PP"], user_limit_sum = None, simtime = 20):
     #INITIAL SYSTEM 
+    if not cache_filename or not filename or not load_serialized:
+        print("Since compilation and simulation both take a very long time even on small input systems and on a modern, powerful processor, please consider using the following optional flags: \n cache_filename - If provided, caches the CompileHistory object to this file (must end with .pkl).\n filename - If provided, writes a human-readable summary of the compilation process to this file (must end with .txt). \n ,load_serialized - If provided, reads a pickled CompileHistory object. Must end in .pkl. ")
     ch = CompileHistory()
-    if not cache_filename:
+    if not load_serialized:
         ch.input_iv = iv
         ch.input_mainvar = mainvar
         ch.input_system = {k: expand(v) for k, v in system.items()}
@@ -350,27 +334,36 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
 
 
         ch.pp_reactions = buildPP(ch.pp_impl_system, ch.pp_impl_mainvar)
-    else:
-        ch = fetch_cached(cache_filename)
-    # cache_obj(ch, "pp_to_ode_test_pickle.pkl")
+        try:
+            if cache_filename:
+                print(f"Saving current compile history object to {cache_filename}")
+                cache_obj(ch, cache_filename)
+            if filename:
+                print(f"Writing text representation to {filename}")
+                ch.write(filename)
+        except Exception:
+            print("Error writing compilation history.")
 
-    ch.pp_reactions = buildPP(ch.pp_impl_system, ch.pp_impl_mainvar)
-    if DEBUG:
+            
+    else:
+        print(f"Loading serialized data from {load_serialized}")
+        try:
+            ch = fetch_cached(load_serialized)
+        except Exception:
+            print(f"Error loading serialized compile history object from {load_serialized}." )
+
+
+    if DEBUG or checks:
+        diagnose_duplicates(ch.pp_reactions)
+        check_duplicate_reactions(ch, verbose)
         odes_from_pp = pp_reactions_to_odes(ch.pp_reactions)
+        comparison = compare_ode_systems(ch.pp_impl_system, odes_from_pp)
+        # Comparison alg is already verbose
+        # print(comparison)
         iv = list(ch.pp_impl_IV.values()) # Intial values should be the same, regardless
         _, lim = fsp(odes_from_pp,iv,mainvar=ch.cleaned_input_mainvar,time_span=(0,simtime),num_points = 250)
         if lim:
             print(f'(Input) Limiting simulation value of main variable is {lim}.')
-
-
-
-
-    # print("Saving files...")
-    # if cache_filename:
-    #     cache_obj(ch, cache_filename)
-
-    # if filename:
-    #     ch.write(filename)
 
     # SIMULATIONS, IF SELECTED
     if sim != []:
@@ -380,6 +373,62 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
     return ch 
 
 
+
+'''Debugging tool - check for duplicate reactions in the compiled PP reaction set.'''
+def diagnose_duplicates(reactions):
+    # Group by structure only — ignore rate
+    groups = defaultdict(list)
+    for i, (rate, lhs, rhs) in enumerate(reactions):
+        key = (tuple(sorted(lhs)), tuple(sorted(rhs)))
+        groups[key].append((i, rate))
+ 
+    dup_groups = {k: v for k, v in groups.items() if len(v) > 1}
+    print(f"{len(dup_groups)} duplicated (lhs,rhs) structure(s).")
+    if not dup_groups:
+        return
+ 
+    # Pick the first duplicate pair and inspect it
+    (lhs, rhs), occurrences = next(iter(dup_groups.items()))
+    print(f"\nExample duplicate: {list(lhs)} -> {list(rhs)}")
+    print(f"Number of occurrences: {len(occurrences)}\n")
+ 
+    for idx, rate in occurrences:
+        print(f"  occurrence at index {idx}:")
+        print(f"    type(rate)      = {type(rate).__name__}")
+        print(f"    repr(rate)      = {repr(rate)}")
+        print(f"    float(rate)     = {float(rate)!r}")
+        print(f"    hash(rate)      = {hash(rate)}")
+        try:
+            print(f"    rate._mpf_      = {rate._mpf_}")   # SymPy Float internal
+        except AttributeError:
+            pass
+        print()
+ 
+    # Direct equality checks
+    r0 = occurrences[0][1]
+    r1 = occurrences[1][1]
+    print(f"r0 == r1           : {r0 == r1}")
+    print(f"r0 is r1           : {r0 is r1}")
+    print(f"float(r0)==float(r1): {float(r0) == float(r1)}")
+    print(f"hash(r0)==hash(r1) : {hash(r0) == hash(r1)}")
+    print(f"|r0 - r1|          : {abs(float(r0) - float(r1)):.3e}")
+
+def check_duplicate_reactions(ch, verbose):
+    from collections import Counter
+    reactions = ch.pp_reactions
+    keys = [ (tuple(sorted(r[1])), tuple(sorted(r[2]))) for r in reactions]
+    counts = Counter(keys)
+    dupes = {k: v for k, v in counts.items() if v > 1}
+
+    if dupes:
+        print(f"{len(dupes)} duplicate reaction(s) found in buildPP output:")
+        for k, v in list(dupes.items())[:5]:
+            print(f"  {v}  rate={k[0]}  {list(k[1])} -> {list(k[2])}")
+    elif verbose:
+        print("No duplicates in reaction list")
+
+
+########### SIMULATION
 '''Simulate the intermediate systems as requested by user input.'''
 def run_simulations(ch, sim,simtime,debug,verbose):
     
@@ -426,7 +475,7 @@ def run_simulations(ch, sim,simtime,debug,verbose):
             ch.bdsys,
             list(ch.bdsysIV.values()),
             mainvar=ch.bdsys_mainvar,
-            time_span=(0,simtime*5),
+            time_span=(0,simtime*3),
             num_points = 250
         )
 
@@ -442,7 +491,7 @@ def run_simulations(ch, sim,simtime,debug,verbose):
             ch.pp_impl_system,
             list(ch.pp_impl_IV.values()),
             mainvar=ch.pp_impl_mainvar,
-            time_span=(0,simtime*5),
+            time_span=(0,simtime*3),
             num_points = 250
         )
 
@@ -451,6 +500,8 @@ def run_simulations(ch, sim,simtime,debug,verbose):
             original_final_value = np.sqrt(max(float(lim), 0.0))
             print(f'Original final value (sqrt of {ch.pp_impl_mainvar}): {original_final_value}')
  
+
+#################### COMPILATION FROM AN INPUT .TXT FILE
 """
 Reads a .txt file describing a system, initial values, and optional flags,
 then compiles using the main compile(...) function. Users should have *some* freedom, but not a lot.

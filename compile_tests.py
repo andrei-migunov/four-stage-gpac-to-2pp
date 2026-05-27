@@ -34,10 +34,11 @@ def test3():
         input,
         Symbol("d"),
         iv,
-        cache_filename="pp_to_ode_test_pickle.pkl",
-        filename="Test3Out.txt",
-        sim=["GPAC","CRN","SCALED","TPP","PP"],
-        simtime=15
+        cache_filename= "one_over_e.pkl", 
+        filename="one_over_e.txt",
+        load_serialized = None,
+        sim=["GPAC","CRN", "DEG2", "SCALED","TPP","PP"],
+        simtime=30
     )
 
 '''Compiles a system that computes (var a) Euler's Gamma via variable gam.'''
@@ -60,7 +61,14 @@ def test4():
                  "gam":"1-gam*ginv"})
     iv = sympify({"f":0,"g":0,"w":0,"u":0,"v":1,"r":1,"p":1,"q":0,"e":0,"E":0,"e_1":0,"e_n":0,"ginv":0,"gam":0})
 
-    ch = compile(input,Symbol("gam"),iv, cache_filename = "Test4CompileHistory.pkl", filename="Test4Out.txt",pre_process= True) # Input system, Primary variable, Input IV
+    ch = compile(input,Symbol("gam"),
+                iv,
+                pre_process= True,
+                cache_filename= "EulerGamma.pkl", 
+                filename="EulerGamma.txt",
+                load_serialized = None,
+                sim=["GPAC","CRN", "DEG2", "SCALED","TPP","PP"],
+                simtime=30) 
 
 
 '''Compiles a system that computes Omega = 0.567143290409783... via variable d.'''
@@ -104,11 +112,9 @@ def test4v2():
 
     ch = compile(input,Symbol("gam"),iv, pre_process=True, cache_filename = "Test4CompileHistory.pkl", filename="Test4Out.txt") # Input system, Primary variable, Input IV
 
-
-
 if __name__ == "__main__":
     import multiprocessing as mp
-    mp.freeze_support()       
-    test3()
+    mp.freeze_support()    
+    test4() 
+    # test3()
     #test4v2()
-#test3()

@@ -56,6 +56,8 @@ Main Procedure
 
     For example, coefficients around 1e-13 may appear after earlier symbolic simplification or expansion. These are treated as zero for the purpose of deciding which transfers actually exist
 
+    Is not invoked if all coefficients are rationals (and they ought to be).
+
 5. Create all z variables.
 
     The function:
