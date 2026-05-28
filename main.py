@@ -4,6 +4,7 @@ from St0_Fns import *
 from St1_Fns import *
 from St2_Fns import *
 from St3_Fns import *
+from St4_Fns import lpp_to_odes, lpp_to_reaction_list, make_lpp
 from ODE_to_PP import *
 import pickle
 from Tools.compare_systems import compare_ode_systems
@@ -147,6 +148,7 @@ class CompileHistory:
         self.pp_reactions = None
         self.lpp = None
         self.lpp_IV = None
+        self.plpp_reactions = None
 
 
         self.ppsim_format = None
@@ -343,6 +345,10 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
 
         ch.lpp, ch.lpp_IV = make_lpp(ch.pp_impl_system, ch.pp_impl_IV, ch.pp_impl_mainvar)
 
+        ch.plpp_reactions = lpp_to_reaction_list(ch.lpp)
+
+        ch.ppsim_format = to_ppsim_format(ch.plpp_reactions)
+
         try:
             if cache_filename:
                 print(f"Saving current compile history object to {cache_filename}")
@@ -369,10 +375,10 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
         comparison = compare_ode_systems(ch.pp_impl_system, odes_from_pp)
         # Comparison alg is already verbose
         # print(comparison)
-        iv = list(ch.pp_impl_IV.values()) # Intial values should be the same, regardless
-        _, lim = fsp(odes_from_pp,iv,mainvar=ch.cleaned_input_mainvar,time_span=(0,simtime),num_points = 250)
-        if lim:
-            print(f'(Input) Limiting simulation value of main variable is {lim}.')
+        # iv = list(ch.pp_impl_IV.values()) # Intial values should be the same, regardless
+        # _, lim = fsp(odes_from_pp,iv,mainvar=ch.cleaned_input_mainvar,time_span=(0,simtime),num_points = 250)
+        # if lim:
+        #     print(f'(Input) Limiting simulation value of main variable is {lim}.')
 
     # SIMULATIONS, IF SELECTED
     if sim != []:
