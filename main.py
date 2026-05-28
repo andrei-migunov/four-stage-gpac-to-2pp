@@ -145,6 +145,8 @@ class CompileHistory:
         self.pp_impl_IV = None
         self.pp_impl_mainvar = None
         self.pp_reactions = None
+        self.lpp = None
+        self.lpp_IV = None
 
 
         self.ppsim_format = None
@@ -337,6 +339,10 @@ def compile(system, mainvar, iv, pre_process = False, cache_filename=None, filen
 
 
         ch.pp_reactions = buildPP(ch.pp_impl_system, ch.pp_impl_mainvar)
+
+
+        ch.lpp, ch.lpp_IV = make_lpp(ch.pp_impl_system, ch.pp_impl_IV, ch.pp_impl_mainvar)
+
         try:
             if cache_filename:
                 print(f"Saving current compile history object to {cache_filename}")
